@@ -65,9 +65,7 @@ static void enter_stop_mode(void) {
   // init GPIO to lowest power state
   current_board->set_bootkick(BOOT_STANDBY);
   current_board->set_amp_enabled(false);
-  for (uint8_t i = 1U; i <= 4U; i++) {
-    current_board->enable_can_transceiver(i, false);
-  }
+  enable_can_transceivers(false);  // keep main CAN on for CAN-based ignition wake-up
 
   // disable ADCs
   ADC1->CR &= ~(ADC_CR_ADEN);
