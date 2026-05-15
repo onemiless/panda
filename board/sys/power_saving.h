@@ -52,6 +52,51 @@ void set_power_save_state(bool enable) {
   }
 }
 
+// RTC periodic wakeup timer using LSI (~32 kHz).
+// After wakeup the MCU resets via NVIC_SystemReset.
+static void rtc_set_wakeup(uint32_t seconds) {
+  // Enable PWR peripheral clock
+  RCC->APB4ENR |= RCC_APB4ENR_PWREN;
+  // Enable backup domain write access
+  PWR->CR1 |= PWR_CR1_DBP;
+  while ((PWR->CR1 & PWR_CR1_DBP) == 0U) { /* wait */ }
+
+  // Enable LSI
+  RCC->CSR |= RCC_CSR_LSION;
+  while ((RCC->CSR & RCC_CSR_LSIRDY) == 0U) { /* wait */ }
+
+  // Select LSI as RTC clock and enable RTC
+  RCC->BDCR = (RCC->BDCR & ~RCC_BDCR_RTCSEL) | RCC_BDCR_RTCSEL_1;  // LSI = 01
+  RCC->BDCR |= RCC_BDCR_RTCEN;
+  while ((RCC->BDCR & RCC_BDCR_RTCRDY) == 0U) { /* wait */ }
+
+  // Unlock RTC write protection
+  RTC->WPR = 0xCAU;
+  RTC->WPR = 0x53U;
+
+  // Enter initialization mode
+  RTC->ISR |= RTC_ISR_INIT;
+  while ((RTC->ISR & RTC_ISR_INITF) == 0U) { /* wait */ }
+
+  // Configure wakeup timer: LSI = 32000 Hz
+  // Wakeup clock = RTCCLK / 16 = 2000 Hz
+  RTC->CR &= ~RTC_CR_WUCKSEL;  // WUCKSEL = 000 (RTCCLK/16)
+  RTC->CR |= RTC_CR_WUTE;       // enable wakeup timer
+  RTC->WUTR = (uint32_t)(2000U * seconds);  // 2000 ticks/sec
+
+  // Exit initialization mode
+  RTC->ISR &= ~RTC_ISR_INIT;
+
+  // Lock RTC write protection
+  RTC->WPR = 0xFFU;
+
+  // Clear wakeup flag
+  RTC->ISR &= ~RTC_ISR_WUTF;
+
+  // Disable backup domain write access
+  PWR->CR1 &= ~PWR_CR1_DBP;
+}
+
 static void enter_stop_mode(void) {
   // set all GPIO to analog mode to reduce power, analog mode also disables pull resistors
   register_set(&(GPIOA->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
@@ -108,8 +153,12 @@ static void enter_stop_mode(void) {
   register_set_bits(&(EXTI->IMR1), can_exti_line);
   register_set_bits(&(EXTI->FTSR1), can_exti_line);
 
-  // clear pending EXTI
-  EXTI->PR1 = (1U << 1) | (1U << 4) | can_exti_line;
+  // EXTI19: RTC wakeup (periodic wakeup for CAN-based ignition vehicles)
+  register_set_bits(&(EXTI->IMR1), (1UL << 19));
+  register_set_bits(&(EXTI->RTSR1), (1UL << 19));
+
+  // clear pending EXTI (include RTC line)
+  EXTI->PR1 = (1U << 1) | (1U << 4) | can_exti_line | (1UL << 19);
 
   // reset if ignition just came on before going to sleep
   if (harness_check_ignition()) {
@@ -137,6 +186,7 @@ static void enter_stop_mode(void) {
   NVIC_EnableIRQ(EXTI4_IRQn);     // SBU1 (PC4)
   NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 RX (PB8), FDCAN2 RX (PB5)
   NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN3 RX (PD12)
+  NVIC_EnableIRQ(RTC_WKUP_IRQn);   // RTC periodic wakeup
 
   __DSB();
   __ISB();

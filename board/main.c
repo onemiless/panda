@@ -399,13 +399,17 @@ int main(void) {
         }
       #endif
     } else {
-      // Only enter deep stop mode when SBU-based ignition wakeup is available.
-      // Vehicles like Tesla rely on CAN-based ignition detection; deep sleep
-      // with CAN transceivers off or a silent CAN bus would prevent wakeup.
-      if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()
-          && harness.status != HARNESS_STATUS_NC) {
+      if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
+        if (harness.status != HARNESS_STATUS_NC) {
+          // SBU-based ignition: deep sleep with SBU + CAN EXTI wakeup
+          enter_stop_mode();
+        } else {
+          // CAN-based ignition (e.g. Tesla): deep sleep with RTC periodic wakeup every 60s
+          // The RTC wakeup + CAN EXTI ensures we catch CAN activity within 60s
+          rtc_set_wakeup(60U);
+          enter_stop_mode();
+        }
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       __WFI();
