@@ -401,15 +401,7 @@ int main(void) {
     } else {
       if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        if (harness.status != HARNESS_STATUS_NC) {
-          // SBU-based ignition: deep sleep with SBU + CAN EXTI wakeup
-          enter_stop_mode();
-        } else {
-          // CAN-based ignition (e.g. Tesla): deep sleep with RTC periodic wakeup every 60s
-          // The RTC wakeup + CAN EXTI ensures we catch CAN activity within 60s
-          rtc_set_wakeup(60U);
-          enter_stop_mode();
-        }
+        enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       __WFI();
