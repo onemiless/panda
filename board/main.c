@@ -399,7 +399,12 @@ int main(void) {
         }
       #endif
     } else {
+      // Only enter deep stop mode when SBU-based ignition wakeup is available.
+      // Vehicles like Tesla rely purely on CAN-based ignition detection; deep
+      // sleep with a silent CAN bus would prevent wakeup. Without SBU lines,
+      // stay in light WFI sleep where the 8Hz tick periodically checks CAN.
       if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()
+          && harness.status != HARNESS_STATUS_NC
           && current_safety_mode == SAFETY_SILENT) {
         enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
