@@ -172,6 +172,25 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
+      // Bench-only wake test: after the SoM powers off, simulate the point at
+      // which the main CAN receiver asserted wake_on_can.
+      if (can_wake_test_armed) {
+        if (!current_board->read_som_gpio() && !can_wake_test_triggered) {
+          if (can_wake_test_countdown_s > 0U) {
+            can_wake_test_countdown_s--;
+          }
+          if (can_wake_test_countdown_s == 0U) {
+            can_wake_test_triggered = true;
+            wake_on_can = true;
+            wake_on_can_cnt = 0U;
+            print("simulated CAN wake\n");
+          }
+        } else if (current_board->read_som_gpio() && can_wake_test_triggered) {
+          can_wake_test_armed = false;
+          can_wake_test_triggered = false;
+        }
+      }
+
       // CAN-rate wake detection
       static uint32_t prev_total_rx = 0U;
       uint32_t total_rx = 0U;
@@ -405,6 +424,7 @@ int main(void) {
       // stay in light WFI sleep where the 8Hz tick periodically checks CAN.
       if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()
           && harness.status != HARNESS_STATUS_NC
+          && !can_wake_test_armed
           && current_safety_mode == SAFETY_SILENT) {
         enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");

@@ -16,6 +16,10 @@ uint32_t ignition_can_cnt = 0U;
 bool wake_can_rate = false;
 uint32_t wake_can_rate_cnt = 0U;
 
+bool can_wake_test_armed = false;
+bool can_wake_test_triggered = false;
+uint16_t can_wake_test_countdown_s = 0U;
+
 bool can_silent = true;
 bool can_loopback = false;
 
