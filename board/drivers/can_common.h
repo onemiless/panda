@@ -235,6 +235,10 @@ void ignition_can_hook(CANPacket_t *msg) {
       if ((counter == ((prev_counter_tesla_ui + 1) % 16)) && (prev_counter_tesla_ui != -1)) {
         tesla_seatbelt_latched = ((msg->data[1] >> 5U) & 0x1U) != 0U;  // UI_warning->buckleStatus
         tesla_door_open = ((msg->data[3] >> 4U) & 0x1U) != 0U;  // UI_warning->anyDoorOpen
+        if (tesla_door_open || tesla_seatbelt_latched) {
+          wake_on_can = true;
+          wake_on_can_cnt = 0U;
+        }
       }
       prev_counter_tesla_ui = counter;
     }

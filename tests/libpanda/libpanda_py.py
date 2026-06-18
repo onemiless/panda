@@ -25,6 +25,9 @@ typedef struct {
 
 ffi.cdef("""
 int set_safety_hooks(uint16_t mode, uint16_t param);
+void ignition_can_hook(CANPacket_t *msg);
+extern bool wake_on_can;
+extern uint32_t wake_on_can_cnt;
 """)
 
 ffi.cdef("""
