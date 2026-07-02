@@ -65,9 +65,11 @@ static void enter_stop_mode(void) {
   // init GPIO to lowest power state
   current_board->set_bootkick(BOOT_STANDBY);
   current_board->set_amp_enabled(false);
-  // Keep the harness main CAN transceiver awake so vehicle CAN traffic can
-  // reach the FDCAN RX EXTI line and wake/reset panda from stop mode.
-  enable_can_transceivers(false);
+  // Keep CAN transceivers awake in stop mode so vehicle activity on any
+  // connected bus can reach an FDCAN RX EXTI line and wake/reset panda.
+  for (uint8_t i = 1U; i <= 4U; i++) {
+    current_board->enable_can_transceiver(i, true);
+  }
 
   // disable ADCs
   ADC1->CR &= ~(ADC_CR_ADEN);
