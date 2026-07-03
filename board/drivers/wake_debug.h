@@ -1,0 +1,68 @@
+#pragma once
+
+#define WAKE_DEBUG_MAGIC 0x57414B45U
+
+typedef struct {
+  uint32_t magic;
+  uint32_t boot_count;
+  uint32_t reset_reason;
+  uint32_t stage;
+  uint32_t enter_count;
+  uint32_t wfi_return_count;
+  uint32_t pre_wfi_exti_pr1;
+  uint32_t post_wfi_exti_pr1;
+  uint32_t exti_imr1;
+  uint32_t exti_rtsr1;
+  uint32_t exti_ftsr1;
+  uint8_t harness_status;
+  uint8_t ignition_line;
+  uint8_t ignition_can_seen;
+  uint8_t som_gpio;
+  uint8_t bootkick_state;
+  uint8_t bootkick_prev_state;
+  uint8_t bootkick_waiting_countdown;
+  uint8_t bootkick_reset_countdown;
+} wake_debug_t;
+
+volatile wake_debug_t wake_debug __attribute__((section(".backup_sram")));
+
+static void wake_debug_init(void) {
+  if (wake_debug.magic != WAKE_DEBUG_MAGIC) {
+    wake_debug.magic = WAKE_DEBUG_MAGIC;
+    wake_debug.boot_count = 0U;
+    wake_debug.enter_count = 0U;
+    wake_debug.wfi_return_count = 0U;
+  }
+  wake_debug.boot_count += 1U;
+  wake_debug.reset_reason = RCC->RSR;
+}
+
+static void wake_debug_stage(uint32_t stage) {
+  wake_debug.magic = WAKE_DEBUG_MAGIC;
+  wake_debug.stage = stage;
+  wake_debug.harness_status = harness.status;
+  wake_debug.ignition_line = (uint8_t)harness_check_ignition();
+  wake_debug.ignition_can_seen = (uint8_t)ignition_can;
+  wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
+}
+
+static void wake_debug_exti_snapshot(bool post_wfi) {
+  if (post_wfi) {
+    wake_debug.post_wfi_exti_pr1 = EXTI->PR1;
+    wake_debug.wfi_return_count += 1U;
+  } else {
+    wake_debug.pre_wfi_exti_pr1 = EXTI->PR1;
+  }
+  wake_debug.exti_imr1 = EXTI->IMR1;
+  wake_debug.exti_rtsr1 = EXTI->RTSR1;
+  wake_debug.exti_ftsr1 = EXTI->FTSR1;
+}
+
+static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t waiting_countdown, uint8_t reset_countdown) {
+  wake_debug.magic = WAKE_DEBUG_MAGIC;
+  wake_debug.bootkick_state = (uint8_t)state;
+  wake_debug.bootkick_prev_state = (uint8_t)prev_state;
+  wake_debug.bootkick_waiting_countdown = waiting_countdown;
+  wake_debug.bootkick_reset_countdown = reset_countdown;
+  wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
+}

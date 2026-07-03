@@ -1,4 +1,5 @@
 #include "board/drivers/drivers.h"
+#include "board/drivers/wake_debug.h"
 
 bool bootkick_reset_triggered = false;
 
@@ -64,5 +65,6 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   if (boot_reset_countdown > 0U) {
     boot_reset_countdown--;
   }
+  wake_debug_bootkick(boot_state, boot_state_prev, waiting_to_boot_countdown, boot_reset_countdown);
   current_board->set_bootkick(boot_state);
 }

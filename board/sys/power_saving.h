@@ -53,6 +53,10 @@ void set_power_save_state(bool enable) {
 }
 
 static void enter_stop_mode(void) {
+  wake_debug.stage = 0x10U;
+  wake_debug.enter_count += 1U;
+  wake_debug_stage(0x11U);
+
   // set all GPIO to analog mode to reduce power, analog mode also disables pull resistors
   register_set(&(GPIOA->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
   register_set(&(GPIOB->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
@@ -61,6 +65,7 @@ static void enter_stop_mode(void) {
   register_set(&(GPIOE->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
   register_set(&(GPIOF->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
   register_set(&(GPIOG->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
+  wake_debug_stage(0x12U);
 
   // init GPIO to lowest power state
   current_board->set_bootkick(BOOT_STANDBY);
@@ -70,6 +75,7 @@ static void enter_stop_mode(void) {
   for (uint8_t i = 1U; i <= 4U; i++) {
     current_board->enable_can_transceiver(i, true);
   }
+  wake_debug_stage(0x13U);
 
   // disable ADCs
   ADC1->CR &= ~(ADC_CR_ADEN);
@@ -117,12 +123,15 @@ static void enter_stop_mode(void) {
   register_set_bits(&(EXTI->IMR1), can_exti_line);
   register_set_bits(&(EXTI->RTSR1), can_exti_line);
   register_set_bits(&(EXTI->FTSR1), can_exti_line);
+  wake_debug_exti_snapshot(false);
+  wake_debug_stage(0x14U);
 
   // clear pending EXTI
   EXTI->PR1 = (1U << 1) | (1U << 4) | can_exti_line;
 
   // reset if ignition just came on before going to sleep
   if (harness_check_ignition()) {
+    wake_debug_stage(0x15U);
     NVIC_SystemReset();
   }
 
@@ -148,9 +157,13 @@ static void enter_stop_mode(void) {
   NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 RX (PB8), FDCAN2 RX (PB5)
   NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN3 RX (PD12)
 
+  wake_debug_exti_snapshot(false);
+  wake_debug_stage(0x16U);
   __DSB();
   __ISB();
   __WFI();
 
+  wake_debug_exti_snapshot(true);
+  wake_debug_stage(0x17U);
   NVIC_SystemReset();
 }

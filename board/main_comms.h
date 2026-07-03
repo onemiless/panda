@@ -211,6 +211,12 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         (void)memcpy(resp, &code[code_len + 64], resp_len);
       }
       break;
+    // **** 0xd5: get wake debug packet
+    case 0xd5:
+      COMPILE_TIME_ASSERT(sizeof(wake_debug_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(wake_debug);
+      (void)memcpy(resp, (uint8_t*)(&wake_debug), resp_len);
+      break;
     // **** 0xd6: get version
     case 0xd6:
       COMPILE_TIME_ASSERT(sizeof(gitversion) <= USBPACKET_MAX_SIZE);
