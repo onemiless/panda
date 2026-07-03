@@ -24,9 +24,35 @@ typedef struct {
   uint8_t bootkick_reset_countdown;
 } wake_debug_t;
 
-volatile wake_debug_t wake_debug __attribute__((section(".backup_sram")));
+volatile wake_debug_t wake_debug;
+
+#define WAKE_DEBUG_WORDS (sizeof(wake_debug_t) / sizeof(uint32_t))
+
+static void wake_debug_enable_backup_domain(void) {
+  register_set_bits(&(RCC->APB4ENR), RCC_APB4ENR_RTCAPBEN);
+  register_set_bits(&(PWR->CR1), PWR_CR1_DBP);
+}
+
+static void wake_debug_save(void) {
+  wake_debug_enable_backup_domain();
+  const uint32_t *src = (const uint32_t *)(&wake_debug);
+  volatile uint32_t *dst = &(RTC->BKP0R);
+  for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
+
+static void wake_debug_load(void) {
+  wake_debug_enable_backup_domain();
+  uint32_t *dst = (uint32_t *)(&wake_debug);
+  volatile uint32_t *src = &(RTC->BKP0R);
+  for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
 
 static void wake_debug_init(void) {
+  wake_debug_load();
   if (wake_debug.magic != WAKE_DEBUG_MAGIC) {
     wake_debug.magic = WAKE_DEBUG_MAGIC;
     wake_debug.boot_count = 0U;
@@ -35,6 +61,7 @@ static void wake_debug_init(void) {
   }
   wake_debug.boot_count += 1U;
   wake_debug.reset_reason = RCC->RSR;
+  wake_debug_save();
 }
 
 static void wake_debug_stage(uint32_t stage) {
@@ -44,6 +71,7 @@ static void wake_debug_stage(uint32_t stage) {
   wake_debug.ignition_line = (uint8_t)harness_check_ignition();
   wake_debug.ignition_can_seen = (uint8_t)ignition_can;
   wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
+  wake_debug_save();
 }
 
 static void wake_debug_exti_snapshot(bool post_wfi) {
@@ -56,6 +84,7 @@ static void wake_debug_exti_snapshot(bool post_wfi) {
   wake_debug.exti_imr1 = EXTI->IMR1;
   wake_debug.exti_rtsr1 = EXTI->RTSR1;
   wake_debug.exti_ftsr1 = EXTI->FTSR1;
+  wake_debug_save();
 }
 
 static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t waiting_countdown, uint8_t reset_countdown) {
@@ -65,4 +94,5 @@ static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t w
   wake_debug.bootkick_waiting_countdown = waiting_countdown;
   wake_debug.bootkick_reset_countdown = reset_countdown;
   wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
+  wake_debug_save();
 }
