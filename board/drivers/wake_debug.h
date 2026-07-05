@@ -1,6 +1,6 @@
 #pragma once
 
-#define WAKE_DEBUG_MAGIC 0x57414B45U
+#define WAKE_DEBUG_MAGIC 0x57414B46U
 
 typedef struct {
   uint32_t magic;
@@ -57,10 +57,11 @@ static void wake_debug_load(void) {
 static void wake_debug_init(void) {
   wake_debug_load();
   if (wake_debug.magic != WAKE_DEBUG_MAGIC) {
+    uint32_t *dst = (uint32_t *)(&wake_debug);
+    for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
+      dst[i] = 0U;
+    }
     wake_debug.magic = WAKE_DEBUG_MAGIC;
-    wake_debug.boot_count = 0U;
-    wake_debug.enter_count = 0U;
-    wake_debug.wfi_return_count = 0U;
   }
   wake_debug.boot_count += 1U;
   wake_debug.reset_reason = RCC->RSR;
