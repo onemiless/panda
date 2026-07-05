@@ -139,7 +139,7 @@ class Panda:
   CAN_PACKET_VERSION = compute_version_hash(os.path.join(opendbc.INCLUDE_PATH, "opendbc/safety/can.h"))
   HEALTH_PACKET_VERSION = compute_version_hash(os.path.join(BASEDIR, "board/health.h"))
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
-  WAKE_DEBUG_STRUCT = struct.Struct("<11I8B")
+  WAKE_DEBUG_STRUCT = struct.Struct("<14I8B")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -563,14 +563,17 @@ class Panda:
       "exti_imr1": a[8],
       "exti_rtsr1": a[9],
       "exti_ftsr1": a[10],
-      "harness_status": a[11],
-      "ignition_line": a[12],
-      "ignition_can_seen": a[13],
-      "som_gpio": a[14],
-      "bootkick_state": a[15],
-      "bootkick_prev_state": a[16],
-      "bootkick_waiting_countdown": a[17],
-      "bootkick_reset_countdown": a[18],
+      "hw_type_snapshot": a[11],
+      "can_exti_line": a[12],
+      "syscfg_exticr2": a[13],
+      "harness_status": a[14],
+      "ignition_line": a[15],
+      "ignition_can_seen": a[16],
+      "som_gpio": a[17],
+      "bootkick_state": a[18],
+      "bootkick_prev_state": a[19],
+      "bootkick_waiting_countdown": a[20],
+      "bootkick_reset_countdown": a[21],
     }
 
   @ensure_health_packet_version

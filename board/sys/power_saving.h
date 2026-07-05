@@ -128,6 +128,7 @@ static void enter_stop_mode(void) {
   if (hw_type == HW_TYPE_TRES) {
     can_exti_line |= (1UL << 9);
   }
+  wake_debug_can_exti(can_exti_line);
   register_set_bits(&(EXTI->IMR1), can_exti_line);
   register_set_bits(&(EXTI->RTSR1), can_exti_line);
   register_set_bits(&(EXTI->FTSR1), can_exti_line);
