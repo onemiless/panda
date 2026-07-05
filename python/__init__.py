@@ -511,6 +511,9 @@ class Panda:
   def call_control_api(self, msg):
     self._handle.controlWrite(Panda.REQUEST_OUT, msg, 0, 0, b'')
 
+  def enable_deepsleep(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'')
+
   # ******************* health *******************
 
   @ensure_health_packet_version
