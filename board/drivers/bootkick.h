@@ -2,6 +2,19 @@
 #include "board/drivers/wake_debug.h"
 
 bool bootkick_reset_triggered = false;
+volatile uint16_t debug_bootkick_countdown = 0U;
+volatile uint8_t debug_bootkick_hold_countdown = 0U;
+
+bool bootkick_debug_active(void) {
+  return (debug_bootkick_countdown > 0U) || (debug_bootkick_hold_countdown > 0U);
+}
+
+void bootkick_debug_schedule(uint16_t delay_s) {
+  debug_bootkick_countdown = delay_s;
+  debug_bootkick_hold_countdown = 0U;
+  current_board->set_bootkick(BOOT_STANDBY);
+  wake_debug_bootkick(BOOT_STANDBY, BOOT_STANDBY, 0U, 0U);
+}
 
 void bootkick_tick(bool ignition, bool recent_heartbeat) {
   static uint16_t bootkick_last_serial_ptr = 0;
@@ -53,6 +66,17 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     if (boot_state == BOOT_RESET) {
       boot_state = BOOT_BOOTKICK;
     }
+  }
+
+  if (debug_bootkick_countdown > 0U) {
+    debug_bootkick_countdown -= 1U;
+    if (debug_bootkick_countdown == 0U) {
+      debug_bootkick_hold_countdown = 30U;
+    }
+  }
+  if (debug_bootkick_hold_countdown > 0U) {
+    boot_state = BOOT_BOOTKICK;
+    debug_bootkick_hold_countdown -= 1U;
   }
 
   // update state

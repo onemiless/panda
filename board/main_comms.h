@@ -107,6 +107,10 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       set_power_save_state(true);
       stop_mode_requested = true;
       break;
+    // **** 0xb6: schedule bootkick test after N seconds
+    case 0xb6:
+      bootkick_debug_schedule(req->param1);
+      break;
     #endif
     // **** 0xc0: reset communications state
     case 0xc0:

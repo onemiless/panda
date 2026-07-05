@@ -694,6 +694,9 @@ class Panda:
   def enter_stop_mode(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'', expect_disconnect=True)
 
+  def schedule_bootkick_test(self, delay_s):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb6, int(delay_s), 0, b'')
+
   def set_safety_mode(self, mode=CarParams.SafetyModel.silent, param=0):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xdc, mode, param, b'')
 
