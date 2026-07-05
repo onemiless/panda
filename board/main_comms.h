@@ -100,12 +100,14 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[1] = ((fan_state.rpm & 0xFF00U) >> 8U);
       resp_len = 2;
       break;
-    // **** 0xb5: request deep sleep, wakes on CAN or SBU
+    // **** 0xb5: keep panda awake as a CAN wake monitor while SoM is down
     #ifdef ALLOW_DEBUG
     case 0xb5:
+      wake_monitor_enabled = true;
       set_safety_mode(SAFETY_SILENT, 0U);
-      set_power_save_state(true);
-      stop_mode_requested = true;
+      set_power_save_state(false);
+      current_board->set_bootkick(BOOT_STANDBY);
+      stop_mode_requested = false;
       break;
     // **** 0xb6: schedule bootkick test after N seconds
     case 0xb6:

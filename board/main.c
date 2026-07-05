@@ -233,7 +233,9 @@ static void tick_handler(void) {
             set_safety_mode(SAFETY_SILENT, 0U);
           }
 
-          if (!power_save_enabled) {
+          if (wake_monitor_enabled && power_save_enabled) {
+            set_power_save_state(false);
+          } else if (!wake_monitor_enabled && !power_save_enabled) {
             set_power_save_state(true);
           }
 
@@ -377,7 +379,7 @@ int main(void) {
         }
       #endif
     } else {
-      if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) && !current_board->read_som_gpio() && !bootkick_debug_active()) {
+      if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) && !current_board->read_som_gpio() && !wake_monitor_enabled && !bootkick_debug_active()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
         enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
