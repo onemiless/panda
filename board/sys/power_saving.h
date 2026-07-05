@@ -101,6 +101,7 @@ static void enter_stop_mode(void) {
   register_set(&(SYSCFG->EXTICR[0]), SYSCFG_EXTICR1_EXTI1_PA, 0xF0U);
   register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI4_PC, 0xFU);
   register_set_bits(&(EXTI->IMR1), (1U << 1) | (1U << 4));
+  register_set_bits(&(EXTI->EMR1), (1U << 1) | (1U << 4));
   register_set_bits(&(EXTI->RTSR1), (1U << 1) | (1U << 4));
   register_set_bits(&(EXTI->FTSR1), (1U << 1) | (1U << 4));
 
@@ -130,6 +131,7 @@ static void enter_stop_mode(void) {
   }
   wake_debug_can_exti(can_exti_line);
   register_set_bits(&(EXTI->IMR1), can_exti_line);
+  register_set_bits(&(EXTI->EMR1), can_exti_line);
   register_set_bits(&(EXTI->RTSR1), can_exti_line);
   register_set_bits(&(EXTI->FTSR1), can_exti_line);
   wake_debug_exti_snapshot(false);

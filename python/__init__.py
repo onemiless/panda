@@ -568,7 +568,7 @@ class Panda:
       "exti_ftsr1": a[10],
       "hw_type_snapshot": a[11],
       "can_exti_line": a[12],
-      "syscfg_exticr2": a[13],
+      "exti_emr1": a[13],
       "harness_status": a[14],
       "ignition_line": a[15],
       "ignition_can_seen": a[16],

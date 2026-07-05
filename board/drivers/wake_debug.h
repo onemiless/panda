@@ -1,6 +1,6 @@
 #pragma once
 
-#define WAKE_DEBUG_MAGIC 0x57414B46U
+#define WAKE_DEBUG_MAGIC 0x57414B47U
 
 typedef struct {
   uint32_t magic;
@@ -16,7 +16,7 @@ typedef struct {
   uint32_t exti_ftsr1;
   uint32_t hw_type_snapshot;
   uint32_t can_exti_line;
-  uint32_t syscfg_exticr2;
+  uint32_t exti_emr1;
   uint8_t harness_status;
   uint8_t ignition_line;
   uint8_t ignition_can_seen;
@@ -81,7 +81,6 @@ static void wake_debug_stage(uint32_t stage) {
 static void wake_debug_can_exti(uint32_t can_exti_line) {
   wake_debug.hw_type_snapshot = hw_type;
   wake_debug.can_exti_line = can_exti_line;
-  wake_debug.syscfg_exticr2 = SYSCFG->EXTICR[2];
   wake_debug_save();
 }
 
@@ -95,6 +94,7 @@ static void wake_debug_exti_snapshot(bool post_wfi) {
   wake_debug.exti_imr1 = EXTI->IMR1;
   wake_debug.exti_rtsr1 = EXTI->RTSR1;
   wake_debug.exti_ftsr1 = EXTI->FTSR1;
+  wake_debug.exti_emr1 = EXTI->EMR1;
   wake_debug_save();
 }
 
