@@ -119,6 +119,7 @@ static void tick_handler(void) {
   static uint8_t prev_harness_status = HARNESS_STATUS_NC;
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
+  static bool wake_monitor_reset_requested = false;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -173,6 +174,13 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
+      if (wake_monitor_enabled && started && !current_board->read_som_gpio() && !wake_monitor_reset_requested) {
+        bootkick_request_reset_pulse();
+        wake_monitor_reset_requested = true;
+      }
+      if (current_board->read_som_gpio() || !started) {
+        wake_monitor_reset_requested = false;
+      }
       bootkick_tick(started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit

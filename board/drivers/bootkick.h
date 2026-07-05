@@ -4,6 +4,7 @@
 bool bootkick_reset_triggered = false;
 volatile uint16_t debug_bootkick_countdown = 0U;
 volatile uint8_t debug_bootkick_hold_countdown = 0U;
+volatile bool bootkick_reset_pulse_requested = false;
 
 bool bootkick_debug_active(void) {
   return (debug_bootkick_countdown > 0U) || (debug_bootkick_hold_countdown > 0U);
@@ -14,6 +15,10 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   debug_bootkick_hold_countdown = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
   wake_debug_bootkick(BOOT_STANDBY, BOOT_STANDBY, 0U, 0U);
+}
+
+void bootkick_request_reset_pulse(void) {
+  bootkick_reset_pulse_requested = true;
 }
 
 void bootkick_tick(bool ignition, bool recent_heartbeat) {
@@ -66,6 +71,14 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     if (boot_state == BOOT_RESET) {
       boot_state = BOOT_BOOTKICK;
     }
+  }
+
+  if (bootkick_reset_pulse_requested && !current_board->read_som_gpio()) {
+    boot_state = BOOT_RESET;
+    boot_reset_countdown = 5U;
+    waiting_to_boot_countdown = 25U;
+    bootkick_reset_triggered = true;
+    bootkick_reset_pulse_requested = false;
   }
 
   if (debug_bootkick_countdown > 0U) {
