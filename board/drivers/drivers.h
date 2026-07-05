@@ -12,6 +12,7 @@
 extern bool bootkick_reset_triggered;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat);
+void bootkick_request_reset_pulse(void);
 
 // ******************** can_common ********************
 
@@ -44,6 +45,8 @@ extern can_health_t can_health[PANDA_CAN_CNT];
 // Ignition detected from CAN messages
 extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
+extern bool wake_monitor_enabled;
+extern bool wake_monitor_can_wake_requested;
 
 extern bool can_silent;
 extern bool can_loopback;

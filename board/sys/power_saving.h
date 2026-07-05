@@ -7,6 +7,7 @@
 
 bool power_save_enabled = false;
 bool wake_monitor_enabled = false;
+bool wake_monitor_can_wake_requested = false;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif
