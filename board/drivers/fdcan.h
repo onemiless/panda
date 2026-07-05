@@ -222,7 +222,7 @@ void can_rx(uint8_t can_number) {
     safety_rx_invalid += safety_rx_hook(&to_push) ? 0U : 1U;
     ignition_can_hook(&to_push);
 
-    #ifndef PANDA_BODY
+    #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
     if (wake_monitor_enabled && !wake_monitor_can_wake_requested) {
       wake_debug_stage(0x34U);
       bootkick_request_reset_pulse();
