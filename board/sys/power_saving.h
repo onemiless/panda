@@ -107,12 +107,17 @@ static void enter_stop_mode(void) {
   // EXTI for CAN wakeup
   // EXTI8:  FDCAN1 RX (PB8)
   // EXTI5:  FDCAN2 RX (PB5)
-  // EXTI12: FDCAN2 alt RX (PB12) or FDCAN3 RX (PD12)
+  // EXTI9:  FDCAN3 RX on tres (PG9)
+  // EXTI12: FDCAN2 alt RX (PB12) or FDCAN3 RX on cuatro (PD12)
   set_gpio_mode(GPIOB, 8, MODE_INPUT);
   register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
   set_gpio_mode(GPIOB, 5, MODE_INPUT);
   register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
-  if (harness.status == HARNESS_STATUS_FLIPPED) {
+  if (hw_type == HW_TYPE_TRES) {
+    set_gpio_mode(GPIOG, 9, MODE_INPUT);
+    register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
+  }
+  if ((hw_type == HW_TYPE_CUATRO) && (harness.status == HARNESS_STATUS_FLIPPED)) {
     set_gpio_mode(GPIOD, 12, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PD, 0xFU);
   } else {
@@ -120,6 +125,9 @@ static void enter_stop_mode(void) {
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
   }
   uint32_t can_exti_line = (1UL << 8) | (1UL << 5) | (1UL << 12);
+  if (hw_type == HW_TYPE_TRES) {
+    can_exti_line |= (1UL << 9);
+  }
   register_set_bits(&(EXTI->IMR1), can_exti_line);
   register_set_bits(&(EXTI->RTSR1), can_exti_line);
   register_set_bits(&(EXTI->FTSR1), can_exti_line);
@@ -154,8 +162,8 @@ static void enter_stop_mode(void) {
   // enable only wakeup EXTI interrupts
   NVIC_EnableIRQ(EXTI1_IRQn);     // SBU2 (PA1)
   NVIC_EnableIRQ(EXTI4_IRQn);     // SBU1 (PC4)
-  NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 RX (PB8), FDCAN2 RX (PB5)
-  NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN3 RX (PD12)
+  NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 RX (PB8), FDCAN2 RX (PB5), FDCAN3 RX on tres (PG9)
+  NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN2 alt RX (PB12), FDCAN3 RX on cuatro (PD12)
 
   wake_debug_exti_snapshot(false);
   wake_debug_stage(0x16U);
