@@ -108,6 +108,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       set_power_save_state(false);
       current_board->set_bootkick(BOOT_STANDBY);
       stop_mode_requested = false;
+      wake_debug_stage(0x30U);
       break;
     // **** 0xb6: schedule bootkick test after N seconds
     case 0xb6:

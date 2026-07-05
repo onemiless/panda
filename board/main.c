@@ -175,6 +175,7 @@ static void tick_handler(void) {
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
       if (wake_monitor_enabled && started && !current_board->read_som_gpio() && !wake_monitor_reset_requested) {
+        wake_debug_stage(0x32U);
         bootkick_request_reset_pulse();
         wake_monitor_reset_requested = true;
       }
@@ -243,6 +244,7 @@ static void tick_handler(void) {
 
           if (wake_monitor_enabled && power_save_enabled) {
             set_power_save_state(false);
+            wake_debug_stage(0x31U);
           } else if (!wake_monitor_enabled && !power_save_enabled) {
             set_power_save_state(true);
           }
