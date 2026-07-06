@@ -101,7 +101,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp_len = 2;
       break;
     // **** 0xb5: keep panda awake as a CAN wake monitor while SoM is down
-    #ifdef ALLOW_DEBUG
     case 0xb5:
       wake_monitor_enabled = true;
       wake_monitor_can_wake_requested = false;
@@ -115,7 +114,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xb6:
       bootkick_debug_schedule(req->param1);
       break;
-    #endif
     // **** 0xc0: reset communications state
     case 0xc0:
       comms_can_reset();

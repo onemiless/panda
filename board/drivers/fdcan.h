@@ -223,7 +223,7 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    if (wake_monitor_enabled && !wake_monitor_can_wake_requested) {
+    if (wake_monitor_enabled && !current_board->read_som_gpio() && !wake_monitor_can_wake_requested) {
       wake_debug_stage(0x34U);
       bootkick_request_reset_pulse();
       wake_monitor_can_wake_requested = true;

@@ -182,6 +182,9 @@ static void tick_handler(void) {
       if (current_board->read_som_gpio() || !started) {
         wake_monitor_reset_requested = false;
       }
+      if (current_board->read_som_gpio()) {
+        wake_monitor_can_wake_requested = false;
+      }
       bootkick_tick(started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
