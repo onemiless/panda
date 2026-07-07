@@ -140,6 +140,7 @@ class Panda:
   HEALTH_PACKET_VERSION = compute_version_hash(os.path.join(BASEDIR, "board/health.h"))
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
   WAKE_DEBUG_STRUCT = struct.Struct("<14I8B")
+  WAKE_SUCCESS_STRUCT = struct.Struct("<10I")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -578,6 +579,25 @@ class Panda:
       "bootkick_waiting_countdown": a[20],
       "bootkick_reset_countdown": a[21],
     }
+
+  def wake_success(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd9, 0, 0, self.WAKE_SUCCESS_STRUCT.size)
+    a = self.WAKE_SUCCESS_STRUCT.unpack(dat)
+    return {
+      "magic": a[0],
+      "latched": a[1],
+      "stage": a[2],
+      "boot_count": a[3],
+      "reset_reason": a[4],
+      "can_exti_line": a[5],
+      "harness_status": a[6],
+      "ignition_line": a[7],
+      "ignition_can_seen": a[8],
+      "som_gpio": a[9],
+    }
+
+  def clear_wake_success(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xd7, 0, 0, b'')
 
   @ensure_health_packet_version
   def can_health(self, can_number):

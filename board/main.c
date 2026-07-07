@@ -179,10 +179,11 @@ static void tick_handler(void) {
       }
       uint32_t rx_per_sec = total_rx - prev_total_rx;
       prev_total_rx = total_rx;
-      if (wake_monitor_enabled && (rx_per_sec >= 200U)) {
+      if (wake_monitor_enabled && !current_board->read_som_gpio() && (rx_per_sec >= 200U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
         wake_debug_stage(0x35U);
+        wake_debug_latch_success(0x35U);
       } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
         wake_can_rate = false;
       } else {

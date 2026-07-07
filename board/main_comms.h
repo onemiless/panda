@@ -223,6 +223,16 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp_len = sizeof(wake_debug);
       (void)memcpy(resp, (uint8_t*)(&wake_debug), resp_len);
       break;
+    // **** 0xd7: clear latched offline wake success
+    case 0xd7:
+      wake_debug_clear_success();
+      break;
+    // **** 0xd9: get latched offline wake success
+    case 0xd9:
+      COMPILE_TIME_ASSERT(sizeof(wake_success_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(wake_success);
+      (void)memcpy(resp, (uint8_t*)(&wake_success), resp_len);
+      break;
     // **** 0xd6: get version
     case 0xd6:
       COMPILE_TIME_ASSERT(sizeof(gitversion) <= USBPACKET_MAX_SIZE);

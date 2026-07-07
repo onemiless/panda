@@ -80,6 +80,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     bootkick_reset_triggered = true;
     bootkick_reset_pulse_requested = false;
     wake_debug_stage(0x33U);
+    wake_debug_latch_success(0x33U);
   }
 
   if (debug_bootkick_countdown > 0U) {

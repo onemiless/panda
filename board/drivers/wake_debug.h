@@ -1,6 +1,7 @@
 #pragma once
 
 #define WAKE_DEBUG_MAGIC 0x57414B47U
+#define WAKE_SUCCESS_MAGIC 0x57535543U
 
 typedef struct {
   uint32_t magic;
@@ -27,9 +28,24 @@ typedef struct {
   uint8_t bootkick_reset_countdown;
 } wake_debug_t;
 
+typedef struct {
+  uint32_t magic;
+  uint32_t latched;
+  uint32_t stage;
+  uint32_t boot_count;
+  uint32_t reset_reason;
+  uint32_t can_exti_line;
+  uint32_t harness_status;
+  uint32_t ignition_line;
+  uint32_t ignition_can_seen;
+  uint32_t som_gpio;
+} wake_success_t;
+
 volatile wake_debug_t wake_debug;
+volatile wake_success_t wake_success;
 
 #define WAKE_DEBUG_WORDS (sizeof(wake_debug_t) / sizeof(uint32_t))
+#define WAKE_SUCCESS_WORDS (sizeof(wake_success_t) / sizeof(uint32_t))
 
 static void wake_debug_enable_backup_domain(void) {
   register_set_bits(&(RCC->APB4ENR), RCC_APB4ENR_RTCAPBEN);
@@ -45,11 +61,29 @@ static void wake_debug_save(void) {
   }
 }
 
+static void wake_success_save(void) {
+  wake_debug_enable_backup_domain();
+  const uint32_t *src = (const uint32_t *)(&wake_success);
+  volatile uint32_t *dst = &(RTC->BKP0R) + WAKE_DEBUG_WORDS;
+  for (uint8_t i = 0U; i < WAKE_SUCCESS_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
+
 static void wake_debug_load(void) {
   wake_debug_enable_backup_domain();
   uint32_t *dst = (uint32_t *)(&wake_debug);
   volatile uint32_t *src = &(RTC->BKP0R);
   for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
+
+static void wake_success_load(void) {
+  wake_debug_enable_backup_domain();
+  uint32_t *dst = (uint32_t *)(&wake_success);
+  volatile uint32_t *src = &(RTC->BKP0R) + WAKE_DEBUG_WORDS;
+  for (uint8_t i = 0U; i < WAKE_SUCCESS_WORDS; i++) {
     dst[i] = src[i];
   }
 }
@@ -66,6 +100,16 @@ static void wake_debug_init(void) {
   wake_debug.boot_count += 1U;
   wake_debug.reset_reason = RCC->RSR;
   wake_debug_save();
+
+  wake_success_load();
+  if (wake_success.magic != WAKE_SUCCESS_MAGIC) {
+    uint32_t *dst = (uint32_t *)(&wake_success);
+    for (uint8_t i = 0U; i < WAKE_SUCCESS_WORDS; i++) {
+      dst[i] = 0U;
+    }
+    wake_success.magic = WAKE_SUCCESS_MAGIC;
+    wake_success_save();
+  }
 }
 
 static void wake_debug_stage(uint32_t stage) {
@@ -76,6 +120,38 @@ static void wake_debug_stage(uint32_t stage) {
   wake_debug.ignition_can_seen = (uint8_t)ignition_can;
   wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
   wake_debug_save();
+}
+
+static void wake_debug_latch_success(uint32_t stage) {
+  if (wake_success.latched != 0U) {
+    return;
+  }
+
+  wake_success.magic = WAKE_SUCCESS_MAGIC;
+  wake_success.latched = 1U;
+  wake_success.stage = stage;
+  wake_success.boot_count = wake_debug.boot_count;
+  wake_success.reset_reason = wake_debug.reset_reason;
+  wake_success.can_exti_line = wake_debug.can_exti_line;
+  wake_success.harness_status = harness.status;
+  wake_success.ignition_line = (uint32_t)harness_check_ignition();
+  wake_success.ignition_can_seen = (uint32_t)ignition_can;
+  wake_success.som_gpio = (uint32_t)current_board->read_som_gpio();
+  wake_success_save();
+}
+
+static void wake_debug_clear_success(void) {
+  wake_success.magic = WAKE_SUCCESS_MAGIC;
+  wake_success.latched = 0U;
+  wake_success.stage = 0U;
+  wake_success.boot_count = 0U;
+  wake_success.reset_reason = 0U;
+  wake_success.can_exti_line = 0U;
+  wake_success.harness_status = 0U;
+  wake_success.ignition_line = 0U;
+  wake_success.ignition_can_seen = 0U;
+  wake_success.som_gpio = 0U;
+  wake_success_save();
 }
 
 static void wake_debug_can_exti(uint32_t can_exti_line) {
