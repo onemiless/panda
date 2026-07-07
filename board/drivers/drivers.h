@@ -47,6 +47,8 @@ extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
 extern bool wake_monitor_enabled;
 extern bool wake_monitor_can_wake_requested;
+extern bool wake_can_rate;
+extern uint32_t wake_can_rate_cnt;
 
 extern bool can_silent;
 extern bool can_loopback;

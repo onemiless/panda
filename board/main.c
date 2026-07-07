@@ -172,6 +172,22 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
+      static uint32_t prev_total_rx = 0U;
+      uint32_t total_rx = 0U;
+      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+        total_rx += can_health[i].total_rx_cnt;
+      }
+      uint32_t rx_per_sec = total_rx - prev_total_rx;
+      prev_total_rx = total_rx;
+      if (wake_monitor_enabled && (rx_per_sec >= 200U)) {
+        wake_can_rate = true;
+        wake_can_rate_cnt = 0U;
+        wake_debug_stage(0x35U);
+      } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
+        wake_can_rate = false;
+      } else {
+      }
+
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
       if (wake_monitor_enabled && started && !current_board->read_som_gpio() && !wake_monitor_reset_requested) {
@@ -184,8 +200,10 @@ static void tick_handler(void) {
       }
       if (current_board->read_som_gpio()) {
         wake_monitor_can_wake_requested = false;
+        wake_can_rate = false;
       }
-      bootkick_tick(started, recent_heartbeat);
+      bool wake_activity = wake_monitor_enabled && (wake_monitor_can_wake_requested || wake_can_rate);
+      bootkick_tick(started || wake_activity, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {
@@ -273,6 +291,7 @@ static void tick_handler(void) {
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
+      wake_can_rate_cnt += 1U;
 
       // synchronous safety check
       safety_tick(&current_safety_config);
