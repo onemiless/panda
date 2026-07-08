@@ -104,6 +104,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xb5:
       wake_monitor_enabled = true;
       wake_monitor_can_wake_requested = false;
+      wake_debug_clear_success();
       set_safety_mode(SAFETY_SILENT, 0U);
       set_power_save_state(false);
       current_board->set_bootkick(BOOT_STANDBY);

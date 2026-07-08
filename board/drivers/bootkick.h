@@ -28,6 +28,13 @@ void bootkick_request_reset_pulse(void) {
   bootkick_reset_pulse_requested = true;
 }
 
+void bootkick_request_wake_pulse(uint32_t stage) {
+  debug_bootkick_countdown = 0U;
+  debug_bootkick_hold_countdown = 30U;
+  wake_debug_stage(stage);
+  wake_debug_latch_success(stage);
+}
+
 void bootkick_tick(bool ignition, bool recent_heartbeat) {
   static uint16_t bootkick_last_serial_ptr = 0;
   static uint8_t waiting_to_boot_countdown = 0;

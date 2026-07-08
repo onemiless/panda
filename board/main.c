@@ -179,11 +179,10 @@ static void tick_handler(void) {
       }
       uint32_t rx_per_sec = total_rx - prev_total_rx;
       prev_total_rx = total_rx;
-      if (wake_monitor_enabled && !current_board->read_som_gpio() && (rx_per_sec >= 200U)) {
+      if (wake_monitor_enabled && (rx_per_sec >= 1U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
-        wake_debug_stage(0x35U);
-        wake_debug_latch_success(0x35U);
+        bootkick_request_wake_pulse(0x35U);
       } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
         wake_can_rate = false;
       } else {
@@ -191,9 +190,8 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      if (wake_monitor_enabled && started && !current_board->read_som_gpio() && !wake_monitor_reset_requested) {
-        wake_debug_stage(0x32U);
-        bootkick_request_reset_pulse();
+      if (wake_monitor_enabled && started && !wake_monitor_reset_requested) {
+        bootkick_request_wake_pulse(0x32U);
         wake_monitor_reset_requested = true;
       }
       if (current_board->read_som_gpio() || !started) {

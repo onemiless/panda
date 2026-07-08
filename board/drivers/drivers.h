@@ -13,6 +13,7 @@ extern bool bootkick_reset_triggered;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat);
 void bootkick_request_reset_pulse(void);
+void bootkick_request_wake_pulse(uint32_t stage);
 
 // ******************** can_common ********************
 
