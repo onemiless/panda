@@ -94,6 +94,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     debug_bootkick_countdown -= 1U;
     if (debug_bootkick_countdown == 0U) {
       debug_bootkick_hold_countdown = 30U;
+      wake_debug_stage(0x36U);
+      wake_debug_latch_success(0x36U);
     }
   }
   if (debug_bootkick_hold_countdown > 0U) {
