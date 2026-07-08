@@ -321,6 +321,7 @@ int main(void) {
   led_set(LED_GREEN, true);
   adc_init(ADC1);
   wake_debug_init();
+  bootkick_debug_restore();
 
   // print hello
   print("\n\n\n************************ MAIN START ************************\n");
