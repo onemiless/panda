@@ -111,6 +111,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
+#define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -153,9 +154,9 @@ static void tick_handler(void) {
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
 
-      if (wake_monitor_enabled && !current_board->read_som_gpio() && (old_harness_status == HARNESS_STATUS_NC) &&
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && !current_board->read_som_gpio() &&
+          (old_harness_status == HARNESS_STATUS_NC) &&
           (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
-        wake_monitor_som_off_seen = true;
         bootkick_request_wake_pulse(0x37U);
         wake_monitor_harness_requested = true;
       }
@@ -189,11 +190,33 @@ static void tick_handler(void) {
       uint32_t rx_per_sec = total_rx - prev_total_rx;
       prev_total_rx = total_rx;
       const bool som_is_on = current_board->read_som_gpio();
-      if (wake_monitor_enabled && !som_is_on) {
-        wake_monitor_som_off_seen = true;
+      if (wake_monitor_enabled) {
+        if (!som_is_on) {
+          if (!wake_monitor_som_off_seen) {
+            wake_monitor_som_off_seen = true;
+            wake_monitor_som_off_ready = false;
+            wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
+            wake_debug_stage(0x39U);
+          } else if (!wake_monitor_som_off_ready) {
+            if (wake_monitor_som_off_countdown > 0U) {
+              wake_monitor_som_off_countdown -= 1U;
+            }
+            if (wake_monitor_som_off_countdown == 0U) {
+              wake_monitor_som_off_ready = true;
+              wake_debug_stage(0x3AU);
+            }
+          } else {
+          }
+        } else if (wake_monitor_som_off_seen && !wake_monitor_som_off_ready) {
+          // Ignore short GPIO drops while Linux and the PMIC are still shutting down.
+          wake_monitor_som_off_seen = false;
+          wake_monitor_som_off_countdown = 0U;
+        } else {
+        }
       }
 
-      if (wake_monitor_enabled && !som_is_on && !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && !som_is_on &&
+          !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
         wake_monitor_can_wake_requested = true;
@@ -205,7 +228,7 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      if (wake_monitor_enabled && !som_is_on && started && !wake_monitor_reset_requested) {
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && !som_is_on && started && !wake_monitor_reset_requested) {
         bootkick_request_wake_pulse(0x32U);
         wake_monitor_reset_requested = true;
       }
@@ -217,6 +240,8 @@ static void tick_handler(void) {
       if (wake_monitor_enabled && wake_monitor_som_off_seen && som_is_on && recent_heartbeat) {
         wake_monitor_enabled = false;
         wake_monitor_som_off_seen = false;
+        wake_monitor_som_off_ready = false;
+        wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_harness_requested = false;
         wake_can_rate = false;

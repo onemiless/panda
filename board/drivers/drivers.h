@@ -51,6 +51,8 @@ extern uint32_t ignition_can_cnt;
 extern volatile bool wake_monitor_enabled;
 extern volatile bool wake_monitor_can_wake_requested;
 extern volatile bool wake_monitor_som_off_seen;
+extern volatile bool wake_monitor_som_off_ready;
+extern volatile uint8_t wake_monitor_som_off_countdown;
 extern bool wake_can_rate;
 extern uint32_t wake_can_rate_cnt;
 

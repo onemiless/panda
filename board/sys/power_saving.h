@@ -9,6 +9,8 @@ bool power_save_enabled = false;
 volatile bool wake_monitor_enabled = false;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_som_off_seen = false;
+volatile bool wake_monitor_som_off_ready = false;
+volatile uint8_t wake_monitor_som_off_countdown = 0U;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif
