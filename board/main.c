@@ -120,6 +120,7 @@ static void tick_handler(void) {
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
   static bool wake_monitor_reset_requested = false;
+  static bool wake_monitor_harness_requested = false;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -143,6 +144,7 @@ static void tick_handler(void) {
 
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {
+      uint8_t old_harness_status = prev_harness_status;
       prev_harness_status = harness.status;
       can_set_orientation(harness.status == HARNESS_STATUS_FLIPPED);
 
@@ -150,6 +152,11 @@ static void tick_handler(void) {
       can_init_all();
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
+
+      if (wake_monitor_enabled && (old_harness_status == HARNESS_STATUS_NC) && (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
+        bootkick_request_wake_pulse(0x37U);
+        wake_monitor_harness_requested = true;
+      }
     }
 
     // decimated to 1Hz
@@ -199,9 +206,10 @@ static void tick_handler(void) {
       }
       if (current_board->read_som_gpio()) {
         wake_monitor_can_wake_requested = false;
+        wake_monitor_harness_requested = false;
         wake_can_rate = false;
       }
-      bool wake_activity = wake_monitor_enabled && (wake_monitor_can_wake_requested || wake_can_rate);
+      bool wake_activity = wake_monitor_enabled && (wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_can_rate);
       bootkick_tick(started || wake_activity, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
