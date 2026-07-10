@@ -153,7 +153,9 @@ static void tick_handler(void) {
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
 
-      if (wake_monitor_enabled && (old_harness_status == HARNESS_STATUS_NC) && (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
+      if (wake_monitor_enabled && !current_board->read_som_gpio() && (old_harness_status == HARNESS_STATUS_NC) &&
+          (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
+        wake_monitor_som_off_seen = true;
         bootkick_request_wake_pulse(0x37U);
         wake_monitor_harness_requested = true;
       }
@@ -186,9 +188,15 @@ static void tick_handler(void) {
       }
       uint32_t rx_per_sec = total_rx - prev_total_rx;
       prev_total_rx = total_rx;
-      if (wake_monitor_enabled && (rx_per_sec >= 1U)) {
+      const bool som_is_on = current_board->read_som_gpio();
+      if (wake_monitor_enabled && !som_is_on) {
+        wake_monitor_som_off_seen = true;
+      }
+
+      if (wake_monitor_enabled && !som_is_on && !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
+        wake_monitor_can_wake_requested = true;
         bootkick_request_wake_pulse(0x35U);
       } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
         wake_can_rate = false;
@@ -197,17 +205,25 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      if (wake_monitor_enabled && started && !wake_monitor_reset_requested) {
+      if (wake_monitor_enabled && !som_is_on && started && !wake_monitor_reset_requested) {
         bootkick_request_wake_pulse(0x32U);
         wake_monitor_reset_requested = true;
       }
-      if (current_board->read_som_gpio() || !started) {
+      const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
+      if (som_is_on || !started) {
         wake_monitor_reset_requested = false;
       }
-      if (current_board->read_som_gpio()) {
+
+      if (wake_monitor_enabled && wake_monitor_som_off_seen && som_is_on && recent_heartbeat) {
+        wake_monitor_enabled = false;
+        wake_monitor_som_off_seen = false;
         wake_monitor_can_wake_requested = false;
         wake_monitor_harness_requested = false;
         wake_can_rate = false;
+        if (wake_was_requested) {
+          wake_debug_latch_success(wake_debug.stage);
+        }
+        wake_debug_stage(0x38U);
       }
       bool wake_activity = wake_monitor_enabled && (wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_can_rate);
       bootkick_tick(started || wake_activity, recent_heartbeat);

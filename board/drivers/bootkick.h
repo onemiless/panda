@@ -5,21 +5,32 @@ bool bootkick_reset_triggered = false;
 volatile uint16_t debug_bootkick_countdown = 0U;
 volatile uint8_t debug_bootkick_hold_countdown = 0U;
 volatile bool bootkick_reset_pulse_requested = false;
+volatile bool bootkick_wake_pulse_active = false;
+volatile bool bootkick_wake_confirmation_pending = false;
+volatile uint32_t bootkick_wake_trigger_stage = 0U;
 
 bool bootkick_debug_active(void) {
-  return (debug_bootkick_countdown > 0U) || (debug_bootkick_hold_countdown > 0U);
+  return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active;
 }
 
 void bootkick_debug_restore(void) {
   if ((wake_debug.bootkick_state == (uint8_t)BOOT_STANDBY) && (wake_debug.bootkick_prev_state == (uint8_t)BOOT_RESET)) {
     debug_bootkick_countdown = wake_debug.bootkick_waiting_countdown;
     debug_bootkick_hold_countdown = wake_debug.bootkick_reset_countdown;
+    bootkick_wake_pulse_active = debug_bootkick_hold_countdown > 0U;
+  }
+  if ((wake_success.latched == 0U) && (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U)) {
+    bootkick_wake_confirmation_pending = true;
+    bootkick_wake_trigger_stage = wake_debug.stage;
   }
 }
 
 void bootkick_debug_schedule(uint16_t delay_s) {
   debug_bootkick_countdown = (delay_s > UINT8_MAX) ? UINT8_MAX : delay_s;
   debug_bootkick_hold_countdown = 0U;
+  bootkick_wake_pulse_active = false;
+  bootkick_wake_confirmation_pending = false;
+  bootkick_wake_trigger_stage = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
   wake_debug_bootkick(BOOT_STANDBY, BOOT_RESET, (uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
 }
@@ -28,11 +39,27 @@ void bootkick_request_reset_pulse(void) {
   bootkick_reset_pulse_requested = true;
 }
 
+void bootkick_cancel_wake_pulse(void) {
+  debug_bootkick_hold_countdown = 0U;
+  bootkick_wake_pulse_active = false;
+}
+
+void bootkick_clear_wake_confirmation(void) {
+  bootkick_wake_confirmation_pending = false;
+  bootkick_wake_trigger_stage = 0U;
+}
+
 void bootkick_request_wake_pulse(uint32_t stage) {
+  if (bootkick_wake_pulse_active) {
+    return;
+  }
+
   debug_bootkick_countdown = 0U;
   debug_bootkick_hold_countdown = 30U;
+  bootkick_wake_pulse_active = true;
+  bootkick_wake_confirmation_pending = true;
+  bootkick_wake_trigger_stage = stage;
   wake_debug_stage(stage);
-  wake_debug_latch_success(stage);
 }
 
 void bootkick_tick(bool ignition, bool recent_heartbeat) {
@@ -45,14 +72,38 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   BootState boot_state_prev = boot_state;
   const bool harness_inserted = (harness.status != bootkick_harness_status_prev) && (harness.status != HARNESS_STATUS_NC);
 
-  if ((ignition && !bootkick_ign_prev) || harness_inserted) {
+  if (recent_heartbeat) {
+    if (bootkick_wake_confirmation_pending && current_board->read_som_gpio()) {
+      wake_debug_latch_success(bootkick_wake_trigger_stage);
+      bootkick_clear_wake_confirmation();
+    }
+    // Release bootkick as soon as the SoM is confirmed alive.
+    bootkick_cancel_wake_pulse();
+    boot_state = BOOT_STANDBY;
+  } else if ((ignition && !bootkick_ign_prev) || harness_inserted) {
     // bootkick on rising edge of ignition or harness insertion
     boot_state = BOOT_BOOTKICK;
-  } else if (recent_heartbeat) {
-    // disable bootkick once openpilot is up
-    boot_state = BOOT_STANDBY;
   } else {
 
+  }
+
+  if (debug_bootkick_countdown > 0U) {
+    debug_bootkick_countdown -= 1U;
+    if (debug_bootkick_countdown == 0U) {
+      debug_bootkick_hold_countdown = 30U;
+      bootkick_wake_pulse_active = true;
+      wake_debug_stage(0x36U);
+    }
+  }
+  if (bootkick_wake_pulse_active) {
+    if (debug_bootkick_hold_countdown > 0U) {
+      boot_state = BOOT_BOOTKICK;
+      debug_bootkick_hold_countdown -= 1U;
+    } else {
+      // A wake request must be a pulse, not a permanently asserted level.
+      bootkick_wake_pulse_active = false;
+      boot_state = BOOT_STANDBY;
+    }
   }
 
   /*
@@ -95,19 +146,6 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     bootkick_reset_pulse_requested = false;
     wake_debug_stage(0x33U);
     wake_debug_latch_success(0x33U);
-  }
-
-  if (debug_bootkick_countdown > 0U) {
-    debug_bootkick_countdown -= 1U;
-    if (debug_bootkick_countdown == 0U) {
-      debug_bootkick_hold_countdown = 30U;
-      wake_debug_stage(0x36U);
-      wake_debug_latch_success(0x36U);
-    }
-  }
-  if (debug_bootkick_hold_countdown > 0U) {
-    boot_state = BOOT_BOOTKICK;
-    debug_bootkick_hold_countdown -= 1U;
   }
 
   // update state
