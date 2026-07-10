@@ -9,6 +9,8 @@ volatile bool bootkick_wake_pulse_active = false;
 volatile bool bootkick_wake_confirmation_pending = false;
 volatile uint32_t bootkick_wake_trigger_stage = 0U;
 
+#define BOOTKICK_WAKE_PULSE_S 2U
+
 bool bootkick_debug_active(void) {
   return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active;
 }
@@ -55,7 +57,7 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   }
 
   debug_bootkick_countdown = 0U;
-  debug_bootkick_hold_countdown = 30U;
+  debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
   bootkick_wake_pulse_active = true;
   bootkick_wake_confirmation_pending = true;
   bootkick_wake_trigger_stage = stage;
