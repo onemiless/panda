@@ -154,7 +154,7 @@ static void tick_handler(void) {
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && !current_board->read_som_gpio() &&
+      if (wake_monitor_enabled && wake_monitor_som_off_ready &&
           (old_harness_status == HARNESS_STATUS_NC) &&
           (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
         bootkick_request_wake_pulse(0x37U);
@@ -189,9 +189,8 @@ static void tick_handler(void) {
       }
       uint32_t rx_per_sec = total_rx - prev_total_rx;
       prev_total_rx = total_rx;
-      const bool som_is_on = current_board->read_som_gpio();
       if (wake_monitor_enabled) {
-        if (!som_is_on) {
+        if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_som_off_seen = true;
             wake_monitor_som_off_ready = false;
@@ -208,14 +207,14 @@ static void tick_handler(void) {
           } else {
           }
         } else if (wake_monitor_som_off_seen && !wake_monitor_som_off_ready) {
-          // Ignore short GPIO drops while Linux and the PMIC are still shutting down.
+          // Ignore short heartbeat gaps while Linux is still shutting down.
           wake_monitor_som_off_seen = false;
           wake_monitor_som_off_countdown = 0U;
         } else {
         }
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && !som_is_on &&
+      if (wake_monitor_enabled && wake_monitor_som_off_ready &&
           !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
@@ -228,16 +227,16 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && !som_is_on && started && !wake_monitor_reset_requested) {
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && started && !wake_monitor_reset_requested) {
         bootkick_request_wake_pulse(0x32U);
         wake_monitor_reset_requested = true;
       }
       const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
-      if (som_is_on || !started) {
+      if (recent_heartbeat || !started) {
         wake_monitor_reset_requested = false;
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_seen && som_is_on && recent_heartbeat) {
+      if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
         wake_monitor_enabled = false;
         wake_monitor_som_off_seen = false;
         wake_monitor_som_off_ready = false;
