@@ -1,6 +1,6 @@
 #pragma once
 
-#define WAKE_DEBUG_MAGIC 0x57414B47U
+#define WAKE_DEBUG_MAGIC 0x57414B48U
 #define WAKE_SUCCESS_MAGIC 0x57535543U
 
 typedef struct {
@@ -114,11 +114,27 @@ static void wake_debug_init(void) {
 
 static void wake_debug_stage(uint32_t stage) {
   wake_debug.magic = WAKE_DEBUG_MAGIC;
+  if (stage == 0x10U) {
+    wake_debug.hw_type_snapshot &= 0xFFU;
+  }
   wake_debug.stage = stage;
   wake_debug.harness_status = harness.status;
   wake_debug.ignition_line = (uint8_t)harness_check_ignition();
   wake_debug.ignition_can_seen = (uint8_t)ignition_can;
   wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
+  wake_debug_save();
+}
+
+static void wake_debug_bootkick_pins(BootState state, bool bootkick_level, bool dc_in_level) {
+  const uint8_t shift = ((uint8_t)state) * 2U;
+  const uint8_t mask = (uint8_t)(0x3U << shift);
+  const uint8_t levels = (uint8_t)(((uint8_t)bootkick_level | ((uint8_t)dc_in_level << 1U)) << shift);
+  const uint8_t phase_mask = (uint8_t)((wake_debug.hw_type_snapshot >> 8U) | (1U << (uint8_t)state));
+  const uint8_t old_levels = (uint8_t)(wake_debug.hw_type_snapshot >> 16U);
+  const uint8_t pin_levels = (old_levels & (uint8_t)(~mask)) | levels;
+  wake_debug.hw_type_snapshot = (wake_debug.hw_type_snapshot & 0xFFU) |
+                                ((uint32_t)phase_mask << 8U) |
+                                ((uint32_t)pin_levels << 16U);
   wake_debug_save();
 }
 

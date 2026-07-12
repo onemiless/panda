@@ -207,10 +207,13 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   if (boot_reset_countdown > 0U) {
     boot_reset_countdown--;
   }
+  current_board->set_bootkick(boot_state);
   if (bootkick_debug_active()) {
     wake_debug_bootkick(BOOT_STANDBY, BOOT_RESET, (uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
   } else {
     wake_debug_bootkick(boot_state, boot_state_prev, waiting_to_boot_countdown, boot_reset_countdown);
   }
-  current_board->set_bootkick(boot_state);
+  if (hw_type == HW_TYPE_CUATRO) {
+    wake_debug_bootkick_pins(boot_state, get_gpio_input(GPIOA, 0) != 0, get_gpio_input(GPIOC, 11) != 0);
+  }
 }
