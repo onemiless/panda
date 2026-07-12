@@ -6,6 +6,7 @@ volatile uint16_t debug_bootkick_countdown = 0U;
 volatile uint8_t debug_bootkick_hold_countdown = 0U;
 volatile bool bootkick_reset_pulse_requested = false;
 volatile bool bootkick_wake_pulse_active = false;
+volatile uint8_t bootkick_wake_release_countdown = 0U;
 volatile bool bootkick_wake_confirmation_pending = false;
 volatile uint32_t bootkick_wake_trigger_stage = 0U;
 volatile uint8_t bootkick_wake_attempts = 0U;
@@ -14,11 +15,12 @@ volatile uint16_t bootkick_wake_uart_ptr = 0U;
 volatile bool bootkick_wake_uart_seen = false;
 
 #define BOOTKICK_WAKE_PULSE_S 2U
+#define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
 
 bool bootkick_debug_active(void) {
-  return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active;
+  return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active || (bootkick_wake_release_countdown > 0U);
 }
 
 void bootkick_debug_restore(void) {
@@ -37,6 +39,7 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   debug_bootkick_countdown = (delay_s > UINT8_MAX) ? UINT8_MAX : delay_s;
   debug_bootkick_hold_countdown = 0U;
   bootkick_wake_pulse_active = false;
+  bootkick_wake_release_countdown = 0U;
   bootkick_wake_confirmation_pending = false;
   bootkick_wake_trigger_stage = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
@@ -50,6 +53,7 @@ void bootkick_request_reset_pulse(void) {
 void bootkick_cancel_wake_pulse(void) {
   debug_bootkick_hold_countdown = 0U;
   bootkick_wake_pulse_active = false;
+  bootkick_wake_release_countdown = 0U;
 }
 
 void bootkick_clear_wake_confirmation(void) {
@@ -64,6 +68,7 @@ void bootkick_clear_wake_confirmation(void) {
 static void bootkick_start_wake_pulse(uint32_t stage) {
   debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
   bootkick_wake_pulse_active = true;
+  bootkick_wake_release_countdown = 0U;
   bootkick_wake_trigger_stage = stage;
   wake_debug_stage(stage);
 }
@@ -122,15 +127,22 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     } else {
       // A wake request must be a pulse, not a permanently asserted level.
       bootkick_wake_pulse_active = false;
-      boot_state = BOOT_STANDBY;
+      bootkick_wake_release_countdown = BOOTKICK_WAKE_RELEASE_S;
+      boot_state = BOOT_WAKE_RELEASE;
     }
+  } else if (bootkick_wake_release_countdown > 0U) {
+    boot_state = BOOT_WAKE_RELEASE;
+    bootkick_wake_release_countdown -= 1U;
+  } else if (boot_state == BOOT_WAKE_RELEASE) {
+    boot_state = BOOT_STANDBY;
+  } else {
   }
 
   if (bootkick_wake_confirmation_pending && !recent_heartbeat) {
     if (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr) {
       // UART activity means the SoM is already booting; another DC_IN edge could interrupt it.
       bootkick_wake_uart_seen = true;
-    } else if (!bootkick_wake_pulse_active && !bootkick_wake_uart_seen &&
+    } else if (!bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
                (bootkick_wake_attempts < BOOTKICK_WAKE_MAX_ATTEMPTS)) {
       if (bootkick_wake_retry_countdown > 0U) {
         bootkick_wake_retry_countdown -= 1U;
