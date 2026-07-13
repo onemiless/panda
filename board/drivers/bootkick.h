@@ -30,9 +30,24 @@ void bootkick_debug_restore(void) {
     debug_bootkick_hold_countdown = wake_debug.bootkick_reset_countdown;
     bootkick_wake_pulse_active = debug_bootkick_hold_countdown > 0U;
   }
-  if ((wake_success.latched == 0U) && (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U)) {
+  const bool initial_wake_stage = (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U);
+  const bool retry_wake_stage = (wake_debug.stage >= 0x3BU) && (wake_debug.stage <= 0x3DU);
+  if ((wake_success.latched == 0U) && (initial_wake_stage || retry_wake_stage)) {
+    const uint8_t persisted_state = (uint8_t)(wake_debug.hw_type_snapshot >> 24U);
     bootkick_wake_confirmation_pending = true;
     bootkick_wake_trigger_stage = wake_debug.stage;
+    bootkick_wake_attempts = persisted_state & 0x3U;
+    bootkick_wake_retry_countdown = (persisted_state >> 2U) & 0xFU;
+    bootkick_wake_uart_seen = (persisted_state & (1U << 6U)) != 0U;
+    bootkick_wake_reset_attempted = (persisted_state & (1U << 7U)) != 0U;
+    bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
+    if (wake_debug.stage == 0x3BU) {
+      bootkick_wake_attempts = MAX(bootkick_wake_attempts, 2U);
+    } else if (wake_debug.stage >= 0x3CU) {
+      bootkick_wake_attempts = MAX(bootkick_wake_attempts, BOOTKICK_WAKE_MAX_ATTEMPTS);
+    } else {
+      bootkick_wake_attempts = MAX(bootkick_wake_attempts, 1U);
+    }
   }
 }
 
@@ -235,4 +250,6 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     wake_debug_bootkick_pins(boot_state, get_gpio_input(GPIOA, 0) != 0, get_gpio_input(GPIOC, 12) != 0);
   } else {
   }
+  wake_debug_bootkick_wake_state(bootkick_wake_attempts, bootkick_wake_retry_countdown,
+                                 bootkick_wake_uart_seen, bootkick_wake_reset_attempted);
 }

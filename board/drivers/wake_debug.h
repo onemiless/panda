@@ -132,9 +132,18 @@ static void wake_debug_bootkick_pins(BootState state, bool bootkick_level, bool 
   const uint8_t phase_mask = (uint8_t)((wake_debug.hw_type_snapshot >> 8U) | (1U << (uint8_t)state));
   const uint8_t old_levels = (uint8_t)(wake_debug.hw_type_snapshot >> 16U);
   const uint8_t pin_levels = (old_levels & (uint8_t)(~mask)) | levels;
-  wake_debug.hw_type_snapshot = (wake_debug.hw_type_snapshot & 0xFFU) |
+  wake_debug.hw_type_snapshot = (wake_debug.hw_type_snapshot & 0xFF0000FFU) |
                                 ((uint32_t)phase_mask << 8U) |
                                 ((uint32_t)pin_levels << 16U);
+  wake_debug_save();
+}
+
+static void wake_debug_bootkick_wake_state(uint8_t attempts, uint8_t retry_countdown, bool uart_seen, bool reset_attempted) {
+  const uint8_t state = (attempts & 0x3U) |
+                        ((retry_countdown & 0xFU) << 2U) |
+                        ((uint8_t)uart_seen << 6U) |
+                        ((uint8_t)reset_attempted << 7U);
+  wake_debug.hw_type_snapshot = (wake_debug.hw_type_snapshot & 0x00FFFFFFU) | ((uint32_t)state << 24U);
   wake_debug_save();
 }
 
