@@ -210,8 +210,11 @@ static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t w
 }
 
 static void wake_debug_bootkick_schedule(uint8_t waiting_countdown, uint8_t hold_countdown) {
-  wake_debug.can_exti_line = (wake_debug.can_exti_line & 0xFFFFU) |
-                             ((uint32_t)waiting_countdown << 16U) |
-                             ((uint32_t)hold_countdown << 24U);
-  wake_debug_save();
+  const uint32_t schedule = (wake_debug.can_exti_line & 0xFFFFU) |
+                            ((uint32_t)waiting_countdown << 16U) |
+                            ((uint32_t)hold_countdown << 24U);
+  if (wake_debug.can_exti_line != schedule) {
+    wake_debug.can_exti_line = schedule;
+    wake_debug_save();
+  }
 }
