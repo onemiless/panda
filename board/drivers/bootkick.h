@@ -14,14 +14,17 @@ volatile uint8_t bootkick_wake_retry_countdown = 0U;
 volatile uint16_t bootkick_wake_uart_ptr = 0U;
 volatile bool bootkick_wake_uart_seen = false;
 volatile bool bootkick_wake_reset_attempted = false;
+volatile uint8_t bootkick_wake_final_countdown = 0U;
 
 #define BOOTKICK_WAKE_PULSE_S 2U
 #define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
+#define BOOTKICK_WAKE_FINAL_GRACE_S 60U
 
 bool bootkick_debug_active(void) {
-  return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active || (bootkick_wake_release_countdown > 0U);
+  return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active ||
+         (bootkick_wake_release_countdown > 0U) || bootkick_wake_confirmation_pending;
 }
 
 void bootkick_debug_restore(void) {
@@ -42,6 +45,8 @@ void bootkick_debug_restore(void) {
     bootkick_wake_retry_countdown = (persisted_state >> 2U) & 0xFU;
     bootkick_wake_uart_seen = (persisted_state & (1U << 6U)) != 0U;
     bootkick_wake_reset_attempted = (persisted_state & (1U << 7U)) != 0U;
+    bootkick_wake_final_countdown = (bootkick_wake_uart_seen || (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS)) ?
+                                      BOOTKICK_WAKE_FINAL_GRACE_S : 0U;
     bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
     if (wake_debug.stage == 0x3BU) {
       bootkick_wake_attempts = MAX(bootkick_wake_attempts, 2U);
@@ -83,6 +88,7 @@ void bootkick_clear_wake_confirmation(void) {
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
+  bootkick_wake_final_countdown = 0U;
 }
 
 static void bootkick_start_wake_pulse(uint32_t stage) {
@@ -105,6 +111,7 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
+  bootkick_wake_final_countdown = 0U;
   bootkick_start_wake_pulse(stage);
 }
 
@@ -160,9 +167,10 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   }
 
   if (bootkick_wake_confirmation_pending && !recent_heartbeat) {
-    if (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr) {
+    if (!bootkick_wake_uart_seen && (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr)) {
       // UART activity means the SoM is already booting; another DC_IN edge could interrupt it.
       bootkick_wake_uart_seen = true;
+      bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
     } else if (!bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
                (bootkick_wake_attempts < BOOTKICK_WAKE_MAX_ATTEMPTS)) {
       if (bootkick_wake_retry_countdown > 0U) {
@@ -229,6 +237,23 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     bootkick_reset_pulse_requested = false;
     wake_debug_stage(0x33U);
     wake_debug_latch_success(0x33U);
+  }
+
+  const bool wake_attempts_finished = (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
+                                      ((hw_type != HW_TYPE_TRES) || bootkick_wake_reset_attempted);
+  const bool wake_final_wait = bootkick_wake_uart_seen || wake_attempts_finished;
+  const bool wake_output_idle = !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
+                                (boot_state != BOOT_RESET);
+  if (bootkick_wake_confirmation_pending && !recent_heartbeat && wake_final_wait && wake_output_idle) {
+    if (bootkick_wake_final_countdown == 0U) {
+      bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
+    } else {
+      bootkick_wake_final_countdown -= 1U;
+      if (bootkick_wake_final_countdown == 0U) {
+        wake_debug_stage(0x3EU);
+        bootkick_clear_wake_confirmation();
+      }
+    }
   }
 
   // update state

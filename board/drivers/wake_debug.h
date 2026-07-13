@@ -114,9 +114,6 @@ static void wake_debug_init(void) {
 
 static void wake_debug_stage(uint32_t stage) {
   wake_debug.magic = WAKE_DEBUG_MAGIC;
-  if (stage == 0x10U) {
-    wake_debug.hw_type_snapshot &= 0xFFU;
-  }
   wake_debug.stage = stage;
   wake_debug.harness_status = harness.status;
   wake_debug.ignition_line = (uint8_t)harness_check_ignition();
@@ -180,6 +177,8 @@ static void wake_debug_clear_success(void) {
 }
 
 static void wake_debug_can_exti(uint32_t can_exti_line) {
+  // A new STOP cycle starts with no active bootkick attempt. Reset the packed
+  // phase, pin, and retry snapshots so they cannot be mistaken for this cycle.
   wake_debug.hw_type_snapshot = hw_type;
   wake_debug.can_exti_line = can_exti_line;
   wake_debug_save();
