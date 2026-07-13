@@ -13,6 +13,7 @@ volatile uint8_t bootkick_wake_attempts = 0U;
 volatile uint8_t bootkick_wake_retry_countdown = 0U;
 volatile uint16_t bootkick_wake_uart_ptr = 0U;
 volatile bool bootkick_wake_uart_seen = false;
+volatile bool bootkick_wake_reset_attempted = false;
 
 #define BOOTKICK_WAKE_PULSE_S 2U
 #define BOOTKICK_WAKE_RELEASE_S 2U
@@ -63,6 +64,7 @@ void bootkick_clear_wake_confirmation(void) {
   bootkick_wake_retry_countdown = 0U;
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
+  bootkick_wake_reset_attempted = false;
 }
 
 static void bootkick_start_wake_pulse(uint32_t stage) {
@@ -84,6 +86,7 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   bootkick_wake_retry_countdown = BOOTKICK_WAKE_RETRY_DELAY_S;
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
+  bootkick_wake_reset_attempted = false;
   bootkick_start_wake_pulse(stage);
 }
 
@@ -155,6 +158,19 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     }
   }
 
+  if (bootkick_wake_confirmation_pending && !recent_heartbeat && !bootkick_wake_uart_seen &&
+      !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
+      (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
+      !bootkick_wake_reset_attempted && (hw_type == HW_TYPE_TRES)) {
+    // Tres has no DC_IN control. If repeated BOOTKICK pulses produce no SoM
+    // UART activity, reset the powered-but-stalled SoM before holding BOOTKICK.
+    bootkick_wake_reset_attempted = true;
+    boot_reset_countdown = 5U;
+    bootkick_reset_triggered = true;
+    boot_state = BOOT_RESET;
+    wake_debug_stage(0x3DU);
+  }
+
   /*
     Ensure SOM boots in case it goes into QDL mode. Reset behavior:
     * shouldn't trigger on the first boot after power-on
@@ -215,5 +231,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   }
   if (hw_type == HW_TYPE_CUATRO) {
     wake_debug_bootkick_pins(boot_state, get_gpio_input(GPIOA, 0) != 0, get_gpio_input(GPIOC, 11) != 0);
+  } else if (hw_type == HW_TYPE_TRES) {
+    wake_debug_bootkick_pins(boot_state, get_gpio_input(GPIOA, 0) != 0, get_gpio_input(GPIOC, 12) != 0);
+  } else {
   }
 }
