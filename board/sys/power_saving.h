@@ -114,7 +114,9 @@ static void enter_stop_mode(void) {
   // EXTI8:  FDCAN1 RX (PB8)
   // EXTI5:  FDCAN2 RX (PB5)
   // EXTI9:  FDCAN3 RX on tres (PG9)
-  // EXTI12: FDCAN2 alt RX (PB12) or FDCAN3 RX on cuatro (PD12)
+  // EXTI12: FDCAN2 alt RX (PB12) on tres or FDCAN3 RX (PD12) on cuatro.
+  // PB12 and PD12 cannot be routed to EXTI12 simultaneously. On cuatro,
+  // preserve FDCAN3 wake; FDCAN2 normal is already covered by PB5/EXTI5.
   set_gpio_mode(GPIOB, 8, MODE_INPUT);
   register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
   set_gpio_mode(GPIOB, 5, MODE_INPUT);
@@ -123,7 +125,7 @@ static void enter_stop_mode(void) {
     set_gpio_mode(GPIOG, 9, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
   }
-  if ((hw_type == HW_TYPE_CUATRO) && (harness.status == HARNESS_STATUS_FLIPPED)) {
+  if (hw_type == HW_TYPE_CUATRO) {
     set_gpio_mode(GPIOD, 12, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PD, 0xFU);
   } else {
