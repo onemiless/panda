@@ -25,9 +25,11 @@ bool bootkick_debug_active(void) {
 }
 
 void bootkick_debug_restore(void) {
-  if ((wake_debug.bootkick_state == (uint8_t)BOOT_STANDBY) && (wake_debug.bootkick_prev_state == (uint8_t)BOOT_RESET)) {
-    debug_bootkick_countdown = wake_debug.bootkick_waiting_countdown;
-    debug_bootkick_hold_countdown = wake_debug.bootkick_reset_countdown;
+  const uint8_t persisted_debug_wait = (uint8_t)(wake_debug.can_exti_line >> 16U);
+  const uint8_t persisted_debug_hold = (uint8_t)(wake_debug.can_exti_line >> 24U);
+  if ((persisted_debug_wait > 0U) || (persisted_debug_hold > 0U)) {
+    debug_bootkick_countdown = persisted_debug_wait;
+    debug_bootkick_hold_countdown = persisted_debug_hold;
     bootkick_wake_pulse_active = debug_bootkick_hold_countdown > 0U;
   }
   const bool initial_wake_stage = (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U);
@@ -59,7 +61,8 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   bootkick_wake_confirmation_pending = false;
   bootkick_wake_trigger_stage = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
-  wake_debug_bootkick(BOOT_STANDBY, BOOT_RESET, (uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
+  wake_debug_bootkick(BOOT_STANDBY, BOOT_STANDBY, 0U, 0U);
+  wake_debug_bootkick_schedule((uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
 }
 
 void bootkick_request_reset_pulse(void) {
@@ -239,11 +242,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     boot_reset_countdown--;
   }
   current_board->set_bootkick(boot_state);
-  if (bootkick_debug_active()) {
-    wake_debug_bootkick(BOOT_STANDBY, BOOT_RESET, (uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
-  } else {
-    wake_debug_bootkick(boot_state, boot_state_prev, waiting_to_boot_countdown, boot_reset_countdown);
-  }
+  wake_debug_bootkick(boot_state, boot_state_prev, waiting_to_boot_countdown, boot_reset_countdown);
+  wake_debug_bootkick_schedule((uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
   if (hw_type == HW_TYPE_CUATRO) {
     wake_debug_bootkick_pins(boot_state, get_gpio_input(GPIOA, 0) != 0, get_gpio_input(GPIOC, 11) != 0);
   } else if (hw_type == HW_TYPE_TRES) {

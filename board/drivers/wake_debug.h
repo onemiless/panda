@@ -208,3 +208,10 @@ static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t w
   wake_debug.som_gpio = (uint8_t)current_board->read_som_gpio();
   wake_debug_save();
 }
+
+static void wake_debug_bootkick_schedule(uint8_t waiting_countdown, uint8_t hold_countdown) {
+  wake_debug.can_exti_line = (wake_debug.can_exti_line & 0xFFFFU) |
+                             ((uint32_t)waiting_countdown << 16U) |
+                             ((uint32_t)hold_countdown << 24U);
+  wake_debug_save();
+}
