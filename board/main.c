@@ -112,7 +112,6 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
-#define WAKE_MONITOR_CAN_QUIET_S 10U
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -196,8 +195,6 @@ static void tick_handler(void) {
             wake_monitor_som_off_seen = true;
             wake_monitor_som_off_ready = false;
             wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
-            wake_monitor_can_armed = false;
-            wake_monitor_can_quiet_countdown = WAKE_MONITOR_CAN_QUIET_S;
             wake_debug_stage(0x39U);
           } else if (!wake_monitor_som_off_ready) {
             if (wake_monitor_som_off_countdown > 0U) {
@@ -213,29 +210,11 @@ static void tick_handler(void) {
           // Ignore short heartbeat gaps while Linux is still shutting down.
           wake_monitor_som_off_seen = false;
           wake_monitor_som_off_countdown = 0U;
-          wake_monitor_can_armed = false;
-          wake_monitor_can_quiet_countdown = 0U;
         } else {
         }
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && !wake_monitor_can_armed) {
-        if (rx_per_sec == 0U) {
-          if (wake_monitor_can_quiet_countdown > 0U) {
-            wake_monitor_can_quiet_countdown -= 1U;
-          }
-          if (wake_monitor_can_quiet_countdown == 0U) {
-            wake_monitor_can_armed = true;
-            wake_debug_stage(0x3FU);
-          }
-        } else {
-          // Existing traffic belongs to the shutdown session. Require a quiet
-          // baseline before treating later traffic as a new vehicle wake edge.
-          wake_monitor_can_quiet_countdown = WAKE_MONITOR_CAN_QUIET_S;
-        }
-      }
-
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
+      if (wake_monitor_enabled && wake_monitor_som_off_ready &&
           !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
         wake_can_rate = true;
         wake_can_rate_cnt = 0U;
@@ -262,8 +241,6 @@ static void tick_handler(void) {
         wake_monitor_som_off_seen = false;
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;
-        wake_monitor_can_armed = false;
-        wake_monitor_can_quiet_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_harness_requested = false;
         wake_can_rate = false;
