@@ -16,7 +16,10 @@ volatile bool bootkick_wake_uart_seen = false;
 volatile bool bootkick_wake_reset_attempted = false;
 volatile uint8_t bootkick_wake_final_countdown = 0U;
 
-#define BOOTKICK_WAKE_PULSE_S 2U
+// Match the proven manual bootkick path closely enough for the Tres PMIC to
+// recognize the wake request under vehicle power conditions. Two seconds was
+// reliable on the bench, but released before the SoM responded in the car.
+#define BOOTKICK_WAKE_PULSE_S 20U
 #define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
