@@ -2,6 +2,7 @@
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
+#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
 static bool tesla_power_state_wake(const CANPacket_t *msg) {
   bool wake = false;
   if ((msg->bus == 0U) && (msg->addr == 0x221U) && (GET_LEN(msg) == 8)) {
@@ -16,6 +17,7 @@ static bool tesla_power_state_wake(const CANPacket_t *msg) {
   }
   return wake;
 }
+#endif
 
 static bool can_set_speed(uint8_t can_number) {
   bool ret = true;
