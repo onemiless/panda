@@ -12,7 +12,8 @@ volatile bool wake_monitor_som_off_seen = false;
 volatile bool wake_monitor_som_off_ready = false;
 volatile uint8_t wake_monitor_som_off_countdown = 0U;
 volatile bool wake_monitor_can_armed = false;
-volatile uint8_t wake_monitor_can_quiet_countdown = 0U;
+volatile uint8_t wake_monitor_can_baseline_countdown = 0U;
+volatile int8_t wake_monitor_tesla_counter = -1;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif

@@ -2,6 +2,21 @@
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
+static bool tesla_power_state_wake(const CANPacket_t *msg) {
+  bool wake = false;
+  if ((msg->bus == 0U) && (msg->addr == 0x221U) && (GET_LEN(msg) == 8)) {
+    const int8_t counter = (int8_t)(msg->data[6] >> 4U);
+    const bool valid_counter = (wake_monitor_tesla_counter >= 0) &&
+                               (counter == ((wake_monitor_tesla_counter + 1) % 16));
+    const uint8_t power_state = (msg->data[0] >> 5U) & 0x3U;
+    wake_monitor_tesla_counter = counter;
+    // Accessory means the user has woken the cabin. Conditioning alone must
+    // not boot the SoM while scheduled climate is running.
+    wake = valid_counter && ((power_state == 2U) || (power_state == 3U));
+  }
+  return wake;
+}
+
 static bool can_set_speed(uint8_t can_number) {
   bool ret = true;
   FDCAN_GlobalTypeDef *FDCANx = CANIF_FROM_CAN_NUM(can_number);
@@ -223,8 +238,8 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
-        !wake_monitor_can_wake_requested) {
+    const bool tesla_wake = wake_monitor_enabled && tesla_power_state_wake(&to_push);
+    if (wake_monitor_som_off_ready && tesla_wake && !wake_monitor_can_wake_requested) {
       bootkick_request_wake_pulse(0x34U);
       wake_monitor_can_wake_requested = true;
     }

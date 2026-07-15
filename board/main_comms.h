@@ -108,7 +108,8 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_som_off_ready = false;
       wake_monitor_som_off_countdown = 0U;
       wake_monitor_can_armed = false;
-      wake_monitor_can_quiet_countdown = 0U;
+      wake_monitor_can_baseline_countdown = 0U;
+      wake_monitor_tesla_counter = -1;
       wake_can_rate = false;
       wake_can_rate_cnt = 0U;
       wake_debug_clear_success();

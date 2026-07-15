@@ -112,7 +112,9 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
-#define WAKE_MONITOR_CAN_QUIET_S 10U
+#define WAKE_MONITOR_CAN_BASELINE_S 10U
+#define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
+#define WAKE_MONITOR_CAN_RATE_DELTA 50U
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -123,6 +125,9 @@ static void tick_handler(void) {
   static bool relay_malfunction_prev = false;
   static bool wake_monitor_reset_requested = false;
   static bool wake_monitor_harness_requested = false;
+  static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint8_t wake_monitor_can_activity_countdown = 0U;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -183,13 +188,11 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
-      static uint32_t prev_total_rx = 0U;
-      uint32_t total_rx = 0U;
+      uint32_t rx_per_bus[PANDA_CAN_CNT] = {0U, 0U, 0U};
       for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-        total_rx += can_health[i].total_rx_cnt;
+        rx_per_bus[i] = can_health[i].total_rx_cnt - wake_monitor_prev_rx[i];
+        wake_monitor_prev_rx[i] = can_health[i].total_rx_cnt;
       }
-      uint32_t rx_per_sec = total_rx - prev_total_rx;
-      prev_total_rx = total_rx;
       if (wake_monitor_enabled) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
@@ -197,7 +200,11 @@ static void tick_handler(void) {
             wake_monitor_som_off_ready = false;
             wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
             wake_monitor_can_armed = false;
-            wake_monitor_can_quiet_countdown = WAKE_MONITOR_CAN_QUIET_S;
+            wake_monitor_can_baseline_countdown = WAKE_MONITOR_CAN_BASELINE_S;
+            wake_monitor_can_activity_countdown = 0U;
+            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+              wake_monitor_can_baseline[i] = rx_per_bus[i];
+            }
             wake_debug_stage(0x39U);
           } else if (!wake_monitor_som_off_ready) {
             if (wake_monitor_som_off_countdown > 0U) {
@@ -214,33 +221,44 @@ static void tick_handler(void) {
           wake_monitor_som_off_seen = false;
           wake_monitor_som_off_countdown = 0U;
           wake_monitor_can_armed = false;
-          wake_monitor_can_quiet_countdown = 0U;
+          wake_monitor_can_baseline_countdown = 0U;
+          wake_monitor_can_activity_countdown = 0U;
         } else {
         }
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready && !wake_monitor_can_armed) {
-        if (rx_per_sec == 0U) {
-          if (wake_monitor_can_quiet_countdown > 0U) {
-            wake_monitor_can_quiet_countdown -= 1U;
-          }
-          if (wake_monitor_can_quiet_countdown == 0U) {
-            wake_monitor_can_armed = true;
-            wake_debug_stage(0x3FU);
-          }
-        } else {
-          // Existing traffic belongs to the shutdown session. Require a quiet
-          // baseline before treating later traffic as a new vehicle wake edge.
-          wake_monitor_can_quiet_countdown = WAKE_MONITOR_CAN_QUIET_S;
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          wake_monitor_can_baseline[i] = wake_monitor_can_baseline[i] - (wake_monitor_can_baseline[i] >> 2U) +
+                                         (rx_per_bus[i] >> 2U);
+        }
+        if (wake_monitor_can_baseline_countdown > 0U) {
+          wake_monitor_can_baseline_countdown -= 1U;
+        }
+        if (wake_monitor_can_baseline_countdown == 0U) {
+          wake_monitor_can_armed = true;
+          wake_debug_stage(0x3FU);
         }
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
-          !wake_monitor_can_wake_requested && (rx_per_sec >= 1U)) {
-        wake_can_rate = true;
-        wake_can_rate_cnt = 0U;
-        wake_monitor_can_wake_requested = true;
-        bootkick_request_wake_pulse(0x35U);
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
+        bool can_rate_jump = false;
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          const uint32_t baseline = wake_monitor_can_baseline[i];
+          const uint32_t delta = (rx_per_bus[i] > baseline) ? (rx_per_bus[i] - baseline) : 0U;
+          const uint32_t threshold = MAX(WAKE_MONITOR_CAN_RATE_DELTA, baseline >> 1U);
+          can_rate_jump |= delta >= threshold;
+          if (delta < threshold) {
+            wake_monitor_can_baseline[i] = baseline - (baseline >> 3U) + (rx_per_bus[i] >> 3U);
+          }
+        }
+        wake_monitor_can_activity_countdown = can_rate_jump ? (wake_monitor_can_activity_countdown + 1U) : 0U;
+        if (wake_monitor_can_activity_countdown >= WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S) {
+          wake_can_rate = true;
+          wake_can_rate_cnt = 0U;
+          wake_monitor_can_wake_requested = true;
+          bootkick_request_wake_pulse(0x35U);
+        }
       } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
         wake_can_rate = false;
       } else {
@@ -263,7 +281,8 @@ static void tick_handler(void) {
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
-        wake_monitor_can_quiet_countdown = 0U;
+        wake_monitor_can_baseline_countdown = 0U;
+        wake_monitor_can_activity_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_harness_requested = false;
         wake_can_rate = false;
