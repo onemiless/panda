@@ -11,9 +11,9 @@ static bool tesla_power_state_wake(const CANPacket_t *msg) {
                                (counter == ((wake_monitor_tesla_counter + 1) % 16));
     const uint8_t power_state = (msg->data[0] >> 5U) & 0x3U;
     wake_monitor_tesla_counter = counter;
-    // Accessory means the user has woken the cabin. Conditioning alone must
-    // not boot the SoM while scheduled climate is running.
-    wake = valid_counter && ((power_state == 2U) || (power_state == 3U));
+    // Any non-off Tesla power state indicates vehicle activity worth waking
+    // the SoM for, including scheduled or user-requested conditioning.
+    wake = valid_counter && (power_state != 0U);
   }
   return wake;
 }
