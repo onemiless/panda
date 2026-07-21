@@ -39,7 +39,8 @@ void bootkick_debug_restore(void) {
     bootkick_wake_pulse_active = debug_bootkick_hold_countdown > 0U;
   }
   const bool initial_wake_stage = (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U);
-  const bool retry_wake_stage = (wake_debug.stage >= 0x3BU) && (wake_debug.stage <= 0x3DU);
+  const bool retry_wake_stage = ((wake_debug.stage >= 0x3BU) && (wake_debug.stage <= 0x3DU)) ||
+                                (wake_debug.stage == 0x3FU);
   if ((wake_success.latched == 0U) && (initial_wake_stage || retry_wake_stage)) {
     const uint8_t persisted_state = (uint8_t)(wake_debug.hw_type_snapshot >> 24U);
     bootkick_wake_confirmation_pending = true;
@@ -228,7 +229,16 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     bootkick_reset_triggered = true;
   } else {
     if (boot_state == BOOT_RESET) {
-      boot_state = BOOT_BOOTKICK;
+      // A Tres that has been asleep for a long time does not reliably boot
+      // from a level that was asserted while RESET was active. Give its PMIC
+      // a complete BOOTKICK edge after releasing RESET, then release it
+      // again. Leaving BOOTKICK asserted here made the short wake path work
+      // but stranded the long-sleep recovery path after stage 0x3D.
+      if (bootkick_wake_confirmation_pending && bootkick_wake_reset_attempted && !bootkick_wake_uart_seen) {
+        bootkick_start_wake_pulse(0x3FU);
+      } else {
+        boot_state = BOOT_BOOTKICK;
+      }
     }
   }
 
