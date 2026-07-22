@@ -15,6 +15,7 @@ volatile uint16_t bootkick_wake_uart_ptr = 0U;
 volatile bool bootkick_wake_uart_seen = false;
 volatile bool bootkick_wake_reset_attempted = false;
 volatile uint8_t bootkick_wake_final_countdown = 0U;
+volatile uint8_t bootkick_wake_post_reset_countdown = 0U;
 
 // Match the proven manual bootkick path closely enough for the Tres PMIC to
 // recognize the wake request under vehicle power conditions. Two seconds was
@@ -24,10 +25,12 @@ volatile uint8_t bootkick_wake_final_countdown = 0U;
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
 #define BOOTKICK_WAKE_FINAL_GRACE_S 60U
+#define BOOTKICK_WAKE_POST_RESET_RELEASE_S 2U
 
 bool bootkick_debug_active(void) {
   return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active ||
-         (bootkick_wake_release_countdown > 0U) || bootkick_wake_confirmation_pending;
+         (bootkick_wake_release_countdown > 0U) || (bootkick_wake_post_reset_countdown > 0U) ||
+         bootkick_wake_confirmation_pending;
 }
 
 void bootkick_debug_restore(void) {
@@ -40,7 +43,7 @@ void bootkick_debug_restore(void) {
   }
   const bool initial_wake_stage = (wake_debug.stage >= 0x32U) && (wake_debug.stage <= 0x37U);
   const bool retry_wake_stage = ((wake_debug.stage >= 0x3BU) && (wake_debug.stage <= 0x3DU)) ||
-                                (wake_debug.stage == 0x3FU);
+                                (wake_debug.stage == 0x40U) || (wake_debug.stage == 0x41U);
   if ((wake_success.latched == 0U) && (initial_wake_stage || retry_wake_stage)) {
     const uint8_t persisted_state = (uint8_t)(wake_debug.hw_type_snapshot >> 24U);
     bootkick_wake_confirmation_pending = true;
@@ -67,6 +70,7 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   debug_bootkick_hold_countdown = 0U;
   bootkick_wake_pulse_active = false;
   bootkick_wake_release_countdown = 0U;
+  bootkick_wake_post_reset_countdown = 0U;
   bootkick_wake_confirmation_pending = false;
   bootkick_wake_trigger_stage = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
@@ -82,6 +86,7 @@ void bootkick_cancel_wake_pulse(void) {
   debug_bootkick_hold_countdown = 0U;
   bootkick_wake_pulse_active = false;
   bootkick_wake_release_countdown = 0U;
+  bootkick_wake_post_reset_countdown = 0U;
 }
 
 void bootkick_clear_wake_confirmation(void) {
@@ -93,13 +98,13 @@ void bootkick_clear_wake_confirmation(void) {
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
   bootkick_wake_final_countdown = 0U;
+  bootkick_wake_post_reset_countdown = 0U;
 }
 
 static void bootkick_start_wake_pulse(uint32_t stage) {
   debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
   bootkick_wake_pulse_active = true;
   bootkick_wake_release_countdown = 0U;
-  bootkick_wake_trigger_stage = stage;
   wake_debug_stage(stage);
 }
 
@@ -116,6 +121,10 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
   bootkick_wake_final_countdown = 0U;
+  bootkick_wake_post_reset_countdown = 0U;
+  // Keep the first cause immutable. Retry/reset stages describe progress,
+  // but must not turn a CAN wake into an apparent harness/reset wake.
+  bootkick_wake_trigger_stage = stage;
   bootkick_start_wake_pulse(stage);
 }
 
@@ -229,16 +238,26 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     bootkick_reset_triggered = true;
   } else {
     if (boot_state == BOOT_RESET) {
-      // A Tres that has been asleep for a long time does not reliably boot
-      // from a level that was asserted while RESET was active. Give its PMIC
-      // a complete BOOTKICK edge after releasing RESET, then release it
-      // again. Leaving BOOTKICK asserted here made the short wake path work
-      // but stranded the long-sleep recovery path after stage 0x3D.
+      // Release RESET and BOOTKICK before creating the wake edge. Calling
+      // BOOT_BOOTKICK here changes PA0 before PC12 is released on Tres, so a
+      // deeply sleeping PMIC can miss the edge while RESET is still active.
       if (bootkick_wake_confirmation_pending && bootkick_wake_reset_attempted && !bootkick_wake_uart_seen) {
-        bootkick_start_wake_pulse(0x3FU);
+        boot_state = BOOT_STANDBY;
+        bootkick_wake_post_reset_countdown = BOOTKICK_WAKE_POST_RESET_RELEASE_S;
+        wake_debug_stage(0x40U);
       } else {
         boot_state = BOOT_BOOTKICK;
       }
+    }
+  }
+
+  if (bootkick_wake_post_reset_countdown > 0U) {
+    boot_state = BOOT_STANDBY;
+    bootkick_wake_post_reset_countdown -= 1U;
+    if (bootkick_wake_post_reset_countdown == 0U) {
+      // Start on the next tick so BOOTKICK remains released for the complete
+      // final second before the PMIC sees the new falling edge.
+      bootkick_start_wake_pulse(0x41U);
     }
   }
 
@@ -256,7 +275,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
                                       ((hw_type != HW_TYPE_TRES) || bootkick_wake_reset_attempted);
   const bool wake_final_wait = bootkick_wake_uart_seen || wake_attempts_finished;
   const bool wake_output_idle = !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
-                                (boot_state != BOOT_RESET);
+                                (bootkick_wake_post_reset_countdown == 0U) && (boot_state != BOOT_RESET);
   if (bootkick_wake_confirmation_pending && !recent_heartbeat && wake_final_wait && wake_output_idle) {
     if (bootkick_wake_final_countdown == 0U) {
       bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
