@@ -3,17 +3,23 @@
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-static bool tesla_power_state_wake(const CANPacket_t *msg) {
+static bool tesla_power_state_wake(const CANPacket_t *msg, uint8_t physical_bus) {
   bool wake = false;
-  if ((msg->bus == 0U) && (msg->addr == 0x221U) && (GET_LEN(msg) == 8)) {
+  if ((msg->addr == 0x221U) && (GET_LEN(msg) == 8)) {
     const int8_t counter = (int8_t)(msg->data[6] >> 4U);
-    const bool valid_counter = (wake_monitor_tesla_counter >= 0) &&
-                               (counter == ((wake_monitor_tesla_counter + 1) % 16));
+    const int8_t previous_counter = (msg->bus == 0U) ? wake_monitor_tesla_counter : -1;
+    const bool valid_counter = (previous_counter >= 0) &&
+                               (counter == ((previous_counter + 1) % 16));
     const uint8_t power_state = (msg->data[0] >> 5U) & 0x3U;
-    wake_monitor_tesla_counter = counter;
+    if (wake_monitor_enabled && wake_monitor_som_off_ready) {
+      wake_can_trace_tesla(physical_bus, msg->bus, power_state, previous_counter, (uint8_t)counter, valid_counter);
+    }
+    if (msg->bus == 0U) {
+      wake_monitor_tesla_counter = counter;
+    }
     // Any non-off Tesla power state indicates vehicle activity worth waking
     // the SoM for, including scheduled or user-requested conditioning.
-    wake = valid_counter && (power_state != 0U);
+    wake = (msg->bus == 0U) && valid_counter && (power_state != 0U);
   }
   return wake;
 }
@@ -240,7 +246,7 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    const bool tesla_wake = wake_monitor_enabled && tesla_power_state_wake(&to_push);
+    const bool tesla_wake = wake_monitor_enabled && tesla_power_state_wake(&to_push, can_number);
     if (wake_monitor_som_off_ready && tesla_wake && !wake_monitor_can_wake_requested) {
       bootkick_request_wake_pulse(0x34U);
       wake_monitor_can_wake_requested = true;

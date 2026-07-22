@@ -128,6 +128,7 @@ static void tick_handler(void) {
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint8_t wake_monitor_can_activity_countdown = 0U;
+  static uint16_t wake_monitor_off_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -196,6 +197,7 @@ static void tick_handler(void) {
       if (wake_monitor_enabled) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
+            wake_monitor_off_seconds = 0U;
             wake_monitor_som_off_seen = true;
             wake_monitor_som_off_ready = false;
             wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
@@ -237,11 +239,13 @@ static void tick_handler(void) {
         }
         if (wake_monitor_can_baseline_countdown == 0U) {
           wake_monitor_can_armed = true;
+          wake_can_trace_clear_peak();
           wake_debug_stage(0x3FU);
         }
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
+        wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
         bool can_rate_jump = false;
         for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
           const uint32_t baseline = wake_monitor_can_baseline[i];
@@ -273,6 +277,22 @@ static void tick_handler(void) {
       const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
       if (recent_heartbeat || !started) {
         wake_monitor_reset_requested = false;
+      }
+
+      if (wake_monitor_enabled && !recent_heartbeat) {
+        if (wake_monitor_off_seconds < UINT16_MAX) {
+          wake_monitor_off_seconds += 1U;
+        }
+        const uint8_t trace_flags =
+          ((uint8_t)wake_monitor_enabled * WAKE_CAN_TRACE_FLAG_MONITOR_ENABLED) |
+          ((uint8_t)wake_monitor_som_off_seen * WAKE_CAN_TRACE_FLAG_SOM_OFF_SEEN) |
+          ((uint8_t)wake_monitor_som_off_ready * WAKE_CAN_TRACE_FLAG_SOM_OFF_READY) |
+          ((uint8_t)wake_monitor_can_armed * WAKE_CAN_TRACE_FLAG_CAN_ARMED) |
+          ((uint8_t)wake_monitor_can_wake_requested * WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED) |
+          ((uint8_t)(wake_monitor_can_activity_countdown > 0U) * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
+          ((uint8_t)ignition_can * WAKE_CAN_TRACE_FLAG_IGNITION_CAN) |
+          ((uint8_t)harness_check_ignition() * WAKE_CAN_TRACE_FLAG_IGNITION_LINE);
+        wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {

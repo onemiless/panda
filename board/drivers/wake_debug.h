@@ -2,6 +2,7 @@
 
 #define WAKE_DEBUG_MAGIC 0x57414B48U
 #define WAKE_SUCCESS_MAGIC 0x57535543U
+#define WAKE_CAN_TRACE_MAGIC 0x57435452U
 
 typedef struct {
   uint32_t magic;
@@ -41,11 +42,39 @@ typedef struct {
   uint32_t som_gpio;
 } wake_success_t;
 
+// Uses the six RTC backup registers left after wake_debug and wake_success.
+// Rates are saturated at UINT16_MAX and describe the largest CAN-rate jump
+// observed after the wake monitor finished learning its baseline.
+typedef struct {
+  uint32_t magic;
+  uint32_t state;
+  uint16_t peak_rx_bus0;
+  uint16_t peak_rx_bus1;
+  uint16_t peak_rx_bus2;
+  uint16_t baseline_bus0;
+  uint16_t baseline_bus1;
+  uint16_t baseline_bus2;
+  uint16_t peak_delta;
+  uint8_t tesla_meta;
+  uint8_t tesla_counters;
+} wake_can_trace_t;
+
 volatile wake_debug_t wake_debug;
 volatile wake_success_t wake_success;
+volatile wake_can_trace_t wake_can_trace;
 
 #define WAKE_DEBUG_WORDS (sizeof(wake_debug_t) / sizeof(uint32_t))
 #define WAKE_SUCCESS_WORDS (sizeof(wake_success_t) / sizeof(uint32_t))
+#define WAKE_CAN_TRACE_WORDS (sizeof(wake_can_trace_t) / sizeof(uint32_t))
+
+#define WAKE_CAN_TRACE_FLAG_MONITOR_ENABLED (1U << 0U)
+#define WAKE_CAN_TRACE_FLAG_SOM_OFF_SEEN (1U << 1U)
+#define WAKE_CAN_TRACE_FLAG_SOM_OFF_READY (1U << 2U)
+#define WAKE_CAN_TRACE_FLAG_CAN_ARMED (1U << 3U)
+#define WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED (1U << 4U)
+#define WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE (1U << 5U)
+#define WAKE_CAN_TRACE_FLAG_IGNITION_CAN (1U << 6U)
+#define WAKE_CAN_TRACE_FLAG_IGNITION_LINE (1U << 7U)
 
 static void wake_debug_enable_backup_domain(void) {
   register_set_bits(&(RCC->APB4ENR), RCC_APB4ENR_RTCAPBEN);
@@ -70,6 +99,15 @@ static void wake_success_save(void) {
   }
 }
 
+static void wake_can_trace_save(void) {
+  wake_debug_enable_backup_domain();
+  const uint32_t *src = (const uint32_t *)(&wake_can_trace);
+  volatile uint32_t *dst = &(RTC->BKP0R) + WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS;
+  for (uint8_t i = 0U; i < WAKE_CAN_TRACE_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
+
 static void wake_debug_load(void) {
   wake_debug_enable_backup_domain();
   uint32_t *dst = (uint32_t *)(&wake_debug);
@@ -86,6 +124,25 @@ static void wake_success_load(void) {
   for (uint8_t i = 0U; i < WAKE_SUCCESS_WORDS; i++) {
     dst[i] = src[i];
   }
+}
+
+static void wake_can_trace_load(void) {
+  wake_debug_enable_backup_domain();
+  uint32_t *dst = (uint32_t *)(&wake_can_trace);
+  volatile uint32_t *src = &(RTC->BKP0R) + WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS;
+  for (uint8_t i = 0U; i < WAKE_CAN_TRACE_WORDS; i++) {
+    dst[i] = src[i];
+  }
+}
+
+static void wake_can_trace_reset(void) {
+  uint32_t *dst = (uint32_t *)(&wake_can_trace);
+  for (uint8_t i = 0U; i < WAKE_CAN_TRACE_WORDS; i++) {
+    dst[i] = 0U;
+  }
+  wake_can_trace.magic = WAKE_CAN_TRACE_MAGIC;
+  wake_can_trace.state = 0xFF000000U;
+  wake_can_trace_save();
 }
 
 static void wake_debug_init(void) {
@@ -109,6 +166,81 @@ static void wake_debug_init(void) {
     }
     wake_success.magic = WAKE_SUCCESS_MAGIC;
     wake_success_save();
+  }
+
+  wake_can_trace_load();
+  if (wake_can_trace.magic != WAKE_CAN_TRACE_MAGIC) {
+    wake_can_trace_reset();
+  }
+}
+
+static uint16_t wake_can_trace_sat_u16(uint32_t value) {
+  return (uint16_t)MIN(value, (uint32_t)UINT16_MAX);
+}
+
+static void wake_can_trace_clear_peak(void) {
+  wake_can_trace.peak_rx_bus0 = 0U;
+  wake_can_trace.peak_rx_bus1 = 0U;
+  wake_can_trace.peak_rx_bus2 = 0U;
+  wake_can_trace.baseline_bus0 = 0U;
+  wake_can_trace.baseline_bus1 = 0U;
+  wake_can_trace.baseline_bus2 = 0U;
+  wake_can_trace.peak_delta = 0U;
+  wake_can_trace.tesla_meta = 0U;
+  wake_can_trace.tesla_counters = 0U;
+  wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | 0xFF000000U;
+  wake_can_trace_save();
+}
+
+static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {
+  const uint32_t old_state = wake_can_trace.state;
+  wake_can_trace.state = (old_state & 0xFF000000U) | ((uint32_t)flags << 16U) | off_seconds;
+  const bool state_changed = ((old_state ^ wake_can_trace.state) & 0x00FF0000U) != 0U;
+  if (state_changed || ((off_seconds % 60U) == 0U)) {
+    wake_can_trace_save();
+  }
+}
+
+static void wake_can_trace_capture_rates(const uint32_t *rx_per_bus, const uint32_t *baseline_per_bus) {
+  uint32_t peak_delta = 0U;
+  uint8_t peak_bus = 0U;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    const uint32_t delta = (rx_per_bus[i] > baseline_per_bus[i]) ? (rx_per_bus[i] - baseline_per_bus[i]) : 0U;
+    if (delta > peak_delta) {
+      peak_delta = delta;
+      peak_bus = i;
+    }
+  }
+
+  const uint8_t old_peak_bus = (uint8_t)(wake_can_trace.state >> 24U);
+  if ((peak_delta > wake_can_trace.peak_delta) || (old_peak_bus == 0xFFU)) {
+    wake_can_trace.peak_rx_bus0 = wake_can_trace_sat_u16(rx_per_bus[0]);
+    wake_can_trace.peak_rx_bus1 = wake_can_trace_sat_u16(rx_per_bus[1]);
+    wake_can_trace.peak_rx_bus2 = wake_can_trace_sat_u16(rx_per_bus[2]);
+    wake_can_trace.baseline_bus0 = wake_can_trace_sat_u16(baseline_per_bus[0]);
+    wake_can_trace.baseline_bus1 = wake_can_trace_sat_u16(baseline_per_bus[1]);
+    wake_can_trace.baseline_bus2 = wake_can_trace_sat_u16(baseline_per_bus[2]);
+    wake_can_trace.peak_delta = wake_can_trace_sat_u16(peak_delta);
+    wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | ((uint32_t)peak_bus << 24U);
+    wake_can_trace_save();
+  }
+}
+
+static void wake_can_trace_tesla(uint8_t physical_bus, uint8_t logical_bus, uint8_t power_state,
+                                 int8_t previous_counter, uint8_t counter, bool valid_counter) {
+  const bool old_seen = (wake_can_trace.tesla_meta & 0x80U) != 0U;
+  const bool old_valid = (wake_can_trace.tesla_meta & 0x40U) != 0U;
+  const bool old_nonoff = ((wake_can_trace.tesla_meta >> 4U) & 0x3U) != 0U;
+  const bool new_nonoff = power_state != 0U;
+  const uint8_t old_priority = ((uint8_t)old_nonoff << 1U) | (uint8_t)old_valid;
+  const uint8_t new_priority = ((uint8_t)new_nonoff << 1U) | (uint8_t)valid_counter;
+  if (!old_seen || (new_priority > old_priority)) {
+    wake_can_trace.tesla_meta = 0x80U | ((uint8_t)valid_counter << 6U) |
+                                ((power_state & 0x3U) << 4U) | ((logical_bus & 0x3U) << 2U) |
+                                (physical_bus & 0x3U);
+    const uint8_t previous = (previous_counter >= 0) ? (uint8_t)previous_counter : 0xFU;
+    wake_can_trace.tesla_counters = ((previous & 0xFU) << 4U) | (counter & 0xFU);
+    wake_can_trace_save();
   }
 }
 

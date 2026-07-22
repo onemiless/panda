@@ -113,6 +113,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_can_rate = false;
       wake_can_rate_cnt = 0U;
       wake_debug_clear_success();
+      wake_can_trace_reset();
       bootkick_cancel_wake_pulse();
       bootkick_clear_wake_confirmation();
       set_safety_mode(SAFETY_SILENT, 0U);
@@ -243,6 +244,13 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       COMPILE_TIME_ASSERT(sizeof(wake_success_t) <= USBPACKET_MAX_SIZE);
       resp_len = sizeof(wake_success);
       (void)memcpy(resp, (uint8_t*)(&wake_success), resp_len);
+      break;
+    // **** 0xda: get persistent CAN wake trace
+    case 0xda:
+      COMPILE_TIME_ASSERT(sizeof(wake_can_trace_t) <= USBPACKET_MAX_SIZE);
+      COMPILE_TIME_ASSERT((WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS + WAKE_CAN_TRACE_WORDS) <= 32U);
+      resp_len = sizeof(wake_can_trace);
+      (void)memcpy(resp, (uint8_t*)(&wake_can_trace), resp_len);
       break;
     // **** 0xd6: get version
     case 0xd6:

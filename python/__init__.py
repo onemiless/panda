@@ -141,6 +141,7 @@ class Panda:
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
   WAKE_DEBUG_STRUCT = struct.Struct("<14I8B")
   WAKE_SUCCESS_STRUCT = struct.Struct("<10I")
+  WAKE_CAN_TRACE_STRUCT = struct.Struct("<II7HBB")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -602,6 +603,37 @@ class Panda:
       "ignition_line": a[7],
       "ignition_can_seen": a[8],
       "som_gpio": a[9],
+    }
+
+  def wake_can_trace(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xda, 0, 0, self.WAKE_CAN_TRACE_STRUCT.size)
+    a = self.WAKE_CAN_TRACE_STRUCT.unpack(dat)
+    flags = (a[1] >> 16) & 0xFF
+    peak_bus = (a[1] >> 24) & 0xFF
+    tesla_meta = a[9]
+    tesla_seen = bool(tesla_meta & 0x80)
+    return {
+      "magic": a[0],
+      "off_seconds": a[1] & 0xFFFF,
+      "monitor_enabled": bool(flags & (1 << 0)),
+      "som_off_seen": bool(flags & (1 << 1)),
+      "som_off_ready": bool(flags & (1 << 2)),
+      "can_armed": bool(flags & (1 << 3)),
+      "wake_requested": bool(flags & (1 << 4)),
+      "rate_candidate": bool(flags & (1 << 5)),
+      "ignition_can": bool(flags & (1 << 6)),
+      "ignition_line": bool(flags & (1 << 7)),
+      "peak_bus": None if peak_bus == 0xFF else peak_bus,
+      "peak_rx_per_sec": [a[2], a[3], a[4]],
+      "baseline_per_sec": [a[5], a[6], a[7]],
+      "peak_delta": a[8],
+      "tesla_seen": tesla_seen,
+      "tesla_counter_valid": tesla_seen and bool(tesla_meta & 0x40),
+      "tesla_power_state": (tesla_meta >> 4) & 0x3 if tesla_seen else None,
+      "tesla_logical_bus": (tesla_meta >> 2) & 0x3 if tesla_seen else None,
+      "tesla_physical_bus": tesla_meta & 0x3 if tesla_seen else None,
+      "tesla_previous_counter": (a[10] >> 4) & 0xF if tesla_seen else None,
+      "tesla_counter": a[10] & 0xF if tesla_seen else None,
     }
 
   def clear_wake_success(self):
