@@ -1,6 +1,6 @@
 #pragma once
 
-#define WAKE_DEBUG_MAGIC 0x57414B48U
+#define WAKE_DEBUG_MAGIC 0x57414B49U
 #define WAKE_SUCCESS_MAGIC 0x57535543U
 
 typedef struct {
@@ -208,10 +208,9 @@ static void wake_debug_bootkick(BootState state, BootState prev_state, uint8_t w
   wake_debug_save();
 }
 
-static void wake_debug_bootkick_schedule(uint8_t waiting_countdown, uint8_t hold_countdown) {
+static void wake_debug_bootkick_schedule(uint16_t waiting_countdown) {
   const uint32_t schedule = (wake_debug.can_exti_line & 0xFFFFU) |
-                            ((uint32_t)waiting_countdown << 16U) |
-                            ((uint32_t)hold_countdown << 24U);
+                            ((uint32_t)waiting_countdown << 16U);
   if (wake_debug.can_exti_line != schedule) {
     wake_debug.can_exti_line = schedule;
     wake_debug_save();
