@@ -575,8 +575,10 @@ class Panda:
       "bootkick_wake_uart_seen": bool((a[11] >> 30) & 0x1),
       "bootkick_wake_reset_attempted": bool((a[11] >> 31) & 0x1),
       "can_exti_line": a[12] & 0xFFFF,
-      "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFF,
-      "bootkick_debug_hold_countdown": (a[12] >> 24) & 0xFF,
+      "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFFFF,
+      # Kept for compatibility with existing debug log consumers. The full
+      # high 16 bits now store the scheduled wait, so pulse hold is not persisted.
+      "bootkick_debug_hold_countdown": 0,
       "exti_emr1": a[13],
       "harness_status": a[14],
       "ignition_line": a[15],
