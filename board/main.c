@@ -248,14 +248,14 @@ static void tick_handler(void) {
             wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
             wake_monitor_tesla_event_pending, wake_monitor_can_wake_requested)) {
         wake_monitor_can_wake_requested = true;
-        wake_monitor_can_dispatch_pending = true;
-        wake_monitor_can_dispatch_stage = 0x34U;
+        wake_monitor_tesla_event_pending = false;
+        wake_monitor_can_dispatch_pending = false;
+        wake_monitor_can_dispatch_stage = 0U;
         wake_debug_stage(0x42U);
-        if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
-          wake_monitor_tesla_event_pending = false;
-          wake_monitor_can_dispatch_pending = false;
-          wake_monitor_can_dispatch_stage = 0U;
-        }
+        // Use the same simple delayed pulse path proven by the on-device
+        // bootkick self-test. The confirmation/retry path can remain stuck at
+        // its initial 0x34 stage while the SoM is down.
+        bootkick_debug_schedule(1U);
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
