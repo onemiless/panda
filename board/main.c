@@ -268,6 +268,17 @@ static void tick_handler(void) {
       } else {
       }
 
+      // A Tesla wake frame can arrive on the FDCAN interrupt boundary while
+      // the 1 Hz monitor is persisting the just-armed (0x3F) stage. Recover
+      // the exact stranded signature instead of leaving wake_requested set
+      // without ever dispatching BOOTKICK.
+      if (bootkick_wake_request_needs_dispatch(
+            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_wake_requested,
+            bootkick_wake_confirmation_pending, bootkick_wake_pulse_active,
+            bootkick_wake_attempts, wake_debug.stage)) {
+        bootkick_request_wake_pulse(0x34U);
+      }
+
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
       if (wake_monitor_enabled && wake_monitor_som_off_ready && started && !wake_monitor_reset_requested) {
