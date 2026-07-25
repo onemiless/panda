@@ -42,6 +42,15 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!bootkick_wake_request_needs_dispatch(true, true, true, true, false, false, 1U, 0x42U));
       // A completed failure is terminal and must not be retried forever.
       assert(!bootkick_wake_request_needs_dispatch(true, true, true, false, false, false, 0U, 0x3EU));
+
+      // A Tesla frame may arrive before CAN arming completes. Keep it pending
+      // until the 1 Hz owner has completed arming, then consume it exactly once.
+      assert(!bootkick_tesla_event_ready(true, true, false, true, false));
+      assert(bootkick_tesla_event_ready(true, true, true, true, false));
+      assert(!bootkick_tesla_event_ready(true, true, true, false, false));
+      assert(!bootkick_tesla_event_ready(true, true, true, true, true));
+      assert(!bootkick_tesla_event_ready(false, true, true, true, false));
+      assert(!bootkick_tesla_event_ready(true, false, true, true, false));
       return 0;
     }
     """

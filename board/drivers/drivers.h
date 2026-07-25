@@ -49,6 +49,7 @@ extern can_health_t can_health[PANDA_CAN_CNT];
 extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
 extern volatile bool wake_monitor_enabled;
+extern volatile bool wake_monitor_tesla_event_pending;
 extern volatile bool wake_monitor_can_wake_requested;
 extern volatile bool wake_monitor_can_dispatch_pending;
 extern volatile uint32_t wake_monitor_can_dispatch_stage;

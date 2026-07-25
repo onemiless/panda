@@ -244,6 +244,20 @@ static void tick_handler(void) {
         }
       }
 
+      if (bootkick_tesla_event_ready(
+            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+            wake_monitor_tesla_event_pending, wake_monitor_can_wake_requested)) {
+        wake_monitor_can_wake_requested = true;
+        wake_monitor_can_dispatch_pending = true;
+        wake_monitor_can_dispatch_stage = 0x34U;
+        wake_debug_stage(0x42U);
+        if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
+          wake_monitor_tesla_event_pending = false;
+          wake_monitor_can_dispatch_pending = false;
+          wake_monitor_can_dispatch_stage = 0U;
+        }
+      }
+
       if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
         wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
         bool can_rate_jump = false;
@@ -319,6 +333,7 @@ static void tick_handler(void) {
 
       if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
         wake_monitor_enabled = false;
+        wake_monitor_tesla_event_pending = false;
         wake_monitor_som_off_seen = false;
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;

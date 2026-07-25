@@ -248,14 +248,10 @@ void can_rx(uint8_t can_number) {
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
     const bool tesla_wake = wake_monitor_enabled && tesla_power_state_wake(&to_push, can_number);
     if (wake_monitor_som_off_ready && tesla_wake && !wake_monitor_can_wake_requested) {
-      wake_monitor_can_wake_requested = true;
-      wake_monitor_can_dispatch_pending = true;
-      wake_monitor_can_dispatch_stage = 0x34U;
-      wake_debug_stage(0x42U);
-      if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
-        wake_monitor_can_dispatch_pending = false;
-        wake_monitor_can_dispatch_stage = 0U;
-      }
+      // The CAN ISR only latches the event. The 1 Hz monitor owns all BOOTKICK
+      // state and RTC stage changes so arming cannot overwrite a dispatched
+      // wake request on an interrupt boundary.
+      wake_monitor_tesla_event_pending = true;
     }
     #endif
 

@@ -21,3 +21,8 @@ static inline bool bootkick_wake_request_needs_dispatch(bool monitor_enabled, bo
          !confirmation_pending && !pulse_active && (wake_attempts == 0U) &&
          (dispatch_pending || persisted_pending);
 }
+
+static inline bool bootkick_tesla_event_ready(bool monitor_enabled, bool som_off_ready, bool can_armed,
+                                              bool tesla_event_pending, bool can_wake_requested) {
+  return monitor_enabled && som_off_ready && can_armed && tesla_event_pending && !can_wake_requested;
+}
