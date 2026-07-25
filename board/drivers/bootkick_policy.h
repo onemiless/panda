@@ -13,10 +13,11 @@ static inline bool bootkick_tres_early_reset_ready(bool is_tres, uint8_t wake_at
 }
 
 static inline bool bootkick_wake_request_needs_dispatch(bool monitor_enabled, bool som_off_ready,
-                                                        bool can_wake_requested, bool confirmation_pending,
-                                                        bool pulse_active, uint8_t wake_attempts,
+                                                        bool can_wake_requested, bool dispatch_pending,
+                                                        bool confirmation_pending, bool pulse_active, uint8_t wake_attempts,
                                                         uint32_t wake_stage) {
+  const bool persisted_pending = (wake_stage == 0x3FU) || (wake_stage == 0x42U) || (wake_stage == 0x43U);
   return monitor_enabled && som_off_ready && can_wake_requested &&
          !confirmation_pending && !pulse_active && (wake_attempts == 0U) &&
-         (wake_stage == 0x3FU);
+         (dispatch_pending || persisted_pending);
 }

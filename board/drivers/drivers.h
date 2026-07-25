@@ -13,7 +13,7 @@ extern bool bootkick_reset_triggered;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat);
 void bootkick_request_reset_pulse(void);
-void bootkick_request_wake_pulse(uint32_t stage);
+bool bootkick_request_wake_pulse(uint32_t stage);
 void bootkick_cancel_wake_pulse(void);
 void bootkick_clear_wake_confirmation(void);
 
@@ -50,6 +50,8 @@ extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
 extern volatile bool wake_monitor_enabled;
 extern volatile bool wake_monitor_can_wake_requested;
+extern volatile bool wake_monitor_can_dispatch_pending;
+extern volatile uint32_t wake_monitor_can_dispatch_stage;
 extern volatile bool wake_monitor_som_off_seen;
 extern volatile bool wake_monitor_som_off_ready;
 extern volatile uint8_t wake_monitor_som_off_countdown;

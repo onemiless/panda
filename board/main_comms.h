@@ -104,6 +104,8 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xb5:
       wake_monitor_enabled = true;
       wake_monitor_can_wake_requested = false;
+      wake_monitor_can_dispatch_pending = false;
+      wake_monitor_can_dispatch_stage = 0U;
       wake_monitor_som_off_seen = false;
       wake_monitor_som_off_ready = false;
       wake_monitor_som_off_countdown = 0U;

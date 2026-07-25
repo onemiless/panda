@@ -110,9 +110,9 @@ static void bootkick_start_wake_pulse(uint32_t stage) {
   wake_debug_stage(stage);
 }
 
-void bootkick_request_wake_pulse(uint32_t stage) {
-  if (bootkick_wake_pulse_active) {
-    return;
+bool bootkick_request_wake_pulse(uint32_t stage) {
+  if (bootkick_wake_pulse_active || bootkick_wake_confirmation_pending) {
+    return false;
   }
 
   debug_bootkick_countdown = 0U;
@@ -129,6 +129,7 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   // but must not turn a CAN wake into an apparent harness/reset wake.
   bootkick_wake_trigger_stage = stage;
   bootkick_start_wake_pulse(stage);
+  return true;
 }
 
 void bootkick_tick(bool ignition, bool recent_heartbeat) {

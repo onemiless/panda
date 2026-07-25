@@ -261,7 +261,13 @@ static void tick_handler(void) {
           wake_can_rate = true;
           wake_can_rate_cnt = 0U;
           wake_monitor_can_wake_requested = true;
-          bootkick_request_wake_pulse(0x35U);
+          wake_monitor_can_dispatch_pending = true;
+          wake_monitor_can_dispatch_stage = 0x35U;
+          wake_debug_stage(0x43U);
+          if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
+            wake_monitor_can_dispatch_pending = false;
+            wake_monitor_can_dispatch_stage = 0U;
+          }
         }
       } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
         wake_can_rate = false;
@@ -274,9 +280,14 @@ static void tick_handler(void) {
       // without ever dispatching BOOTKICK.
       if (bootkick_wake_request_needs_dispatch(
             wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_wake_requested,
-            bootkick_wake_confirmation_pending, bootkick_wake_pulse_active,
+            wake_monitor_can_dispatch_pending, bootkick_wake_confirmation_pending, bootkick_wake_pulse_active,
             bootkick_wake_attempts, wake_debug.stage)) {
-        bootkick_request_wake_pulse(0x34U);
+        const uint32_t dispatch_stage = ((wake_monitor_can_dispatch_stage == 0x35U) || (wake_debug.stage == 0x43U)) ?
+                                          0x35U : 0x34U;
+        if (bootkick_request_wake_pulse(dispatch_stage)) {
+          wake_monitor_can_dispatch_pending = false;
+          wake_monitor_can_dispatch_stage = 0U;
+        }
       }
 
       // tick drivers at 1Hz
@@ -315,6 +326,8 @@ static void tick_handler(void) {
         wake_monitor_can_baseline_countdown = 0U;
         wake_monitor_can_activity_countdown = 0U;
         wake_monitor_can_wake_requested = false;
+        wake_monitor_can_dispatch_pending = false;
+        wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
         wake_can_rate = false;
         if (wake_was_requested) {
