@@ -26,3 +26,21 @@ static inline bool bootkick_tesla_event_ready(bool monitor_enabled, bool som_off
                                               bool tesla_event_pending, bool can_wake_requested) {
   return monitor_enabled && som_off_ready && can_armed && tesla_event_pending && !can_wake_requested;
 }
+
+static inline bool tesla_wake_counter_valid(int8_t previous_counter, int8_t counter) {
+  return (previous_counter >= 0) && (counter == ((previous_counter + 1) % 16));
+}
+
+static inline int8_t tesla_ui_warning_counter(const uint8_t *data) {
+  return (int8_t)(data[1] & 0xFU);
+}
+
+static inline bool tesla_ui_warning_door_open(const uint8_t *data) {
+  return (data[3] & 0x10U) != 0U;
+}
+
+static inline bool tesla_door_wake_ready(uint8_t logical_bus, uint8_t len, int8_t previous_counter,
+                                         int8_t counter, bool door_open) {
+  return (logical_bus == 0U) && (len == 7U) &&
+         tesla_wake_counter_valid(previous_counter, counter) && door_open;
+}

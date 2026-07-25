@@ -75,6 +75,8 @@ volatile wake_can_trace_t wake_can_trace;
 #define WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE (1U << 5U)
 #define WAKE_CAN_TRACE_FLAG_IGNITION_CAN (1U << 6U)
 #define WAKE_CAN_TRACE_FLAG_IGNITION_LINE (1U << 7U)
+#define WAKE_CAN_TRACE_SOURCE_TESLA_DOOR 0xFDU
+#define WAKE_CAN_TRACE_SOURCE_TESLA_POWER 0xFEU
 
 static void wake_debug_enable_backup_domain(void) {
   register_set_bits(&(RCC->APB4ENR), RCC_APB4ENR_RTCAPBEN);
@@ -199,6 +201,11 @@ static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {
   if (state_changed || ((off_seconds % 60U) == 0U)) {
     wake_can_trace_save();
   }
+}
+
+static void wake_can_trace_set_source(uint8_t source) {
+  wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | ((uint32_t)source << 24U);
+  wake_can_trace_save();
 }
 
 static void wake_can_trace_capture_rates(const uint32_t *rx_per_bus, const uint32_t *baseline_per_bus) {

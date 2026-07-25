@@ -104,6 +104,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xb5:
       wake_monitor_enabled = true;
       wake_monitor_tesla_event_pending = false;
+      wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
       wake_monitor_can_wake_requested = false;
       wake_monitor_can_dispatch_pending = false;
       wake_monitor_can_dispatch_stage = 0U;
@@ -113,6 +114,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_can_armed = false;
       wake_monitor_can_baseline_countdown = 0U;
       wake_monitor_tesla_counter = -1;
+      wake_monitor_tesla_door_counter = -1;
       wake_can_rate = false;
       wake_can_rate_cnt = 0U;
       wake_debug_clear_success();

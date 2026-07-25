@@ -41,6 +41,7 @@ def test_wake_can_trace_decodes_persistent_can_snapshot():
     "ignition_can": False,
     "ignition_line": False,
     "peak_bus": 2,
+    "wake_source": None,
     "peak_rx_per_sec": [120, 340, 560],
     "baseline_per_sec": [100, 200, 300],
     "peak_delta": 260,
@@ -52,3 +53,37 @@ def test_wake_can_trace_decodes_persistent_can_snapshot():
     "tesla_previous_counter": 10,
     "tesla_counter": 11,
   }
+
+
+def test_wake_can_trace_decodes_tesla_door_source():
+  state = 77 | (0x1F << 16) | (0xFD << 24)
+  payload = Panda.WAKE_CAN_TRACE_STRUCT.pack(
+    0x57435452, state,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  )
+  panda = object.__new__(Panda)
+  panda._handle = FakeHandle(payload)
+
+  trace = panda.wake_can_trace()
+
+  assert trace["peak_bus"] is None
+  assert trace["wake_source"] == "teslaDoor"
+
+
+def test_wake_can_trace_decodes_tesla_power_source():
+  state = 78 | (0x1F << 16) | (0xFE << 24)
+  payload = Panda.WAKE_CAN_TRACE_STRUCT.pack(
+    0x57435452, state,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  )
+  panda = object.__new__(Panda)
+  panda._handle = FakeHandle(payload)
+
+  trace = panda.wake_can_trace()
+
+  assert trace["peak_bus"] is None
+  assert trace["wake_source"] == "teslaPower"

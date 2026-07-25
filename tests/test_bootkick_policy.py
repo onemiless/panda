@@ -51,6 +51,24 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!bootkick_tesla_event_ready(true, true, true, true, true));
       assert(!bootkick_tesla_event_ready(false, true, true, true, false));
       assert(!bootkick_tesla_event_ready(true, false, true, true, false));
+
+      // Tesla UI_warning must show a real sequential counter and an open
+      // door on Party bus before it can wake a powered-down SoM.
+      assert(tesla_wake_counter_valid(0, 1));
+      assert(tesla_wake_counter_valid(15, 0));
+      assert(!tesla_wake_counter_valid(-1, 0));
+      assert(!tesla_wake_counter_valid(1, 1));
+      assert(!tesla_wake_counter_valid(1, 3));
+      const uint8_t closed_frame[7] = {0U, 4U, 0U, 0U, 0U, 0U, 0U};
+      const uint8_t open_frame[7] = {0U, 5U, 0U, 0x10U, 0U, 0U, 0U};
+      assert(tesla_ui_warning_counter(open_frame) == 5);
+      assert(!tesla_ui_warning_door_open(closed_frame));
+      assert(tesla_ui_warning_door_open(open_frame));
+      assert(tesla_door_wake_ready(0U, 7U, 4, 5, true));
+      assert(!tesla_door_wake_ready(1U, 7U, 4, 5, true));
+      assert(!tesla_door_wake_ready(0U, 8U, 4, 5, true));
+      assert(!tesla_door_wake_ready(0U, 7U, 4, 5, false));
+      assert(!tesla_door_wake_ready(0U, 7U, 4, 6, true));
       return 0;
     }
     """

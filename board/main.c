@@ -247,10 +247,18 @@ static void tick_handler(void) {
       if (bootkick_tesla_event_ready(
             wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
             wake_monitor_tesla_event_pending, wake_monitor_can_wake_requested)) {
+        const uint8_t tesla_event_source = wake_monitor_tesla_event_source;
         wake_monitor_can_wake_requested = true;
         wake_monitor_tesla_event_pending = false;
+        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
+        if (tesla_event_source == TESLA_WAKE_SOURCE_DOOR) {
+          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_DOOR);
+        } else if (tesla_event_source == TESLA_WAKE_SOURCE_POWER) {
+          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_POWER);
+        } else {
+        }
         wake_debug_stage(0x42U);
         // Use the same simple delayed pulse path proven by the on-device
         // bootkick self-test. The confirmation/retry path can remain stuck at
@@ -334,6 +342,7 @@ static void tick_handler(void) {
       if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
         wake_monitor_enabled = false;
         wake_monitor_tesla_event_pending = false;
+        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         wake_monitor_som_off_seen = false;
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;

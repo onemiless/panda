@@ -8,6 +8,7 @@
 bool power_save_enabled = false;
 volatile bool wake_monitor_enabled = false;
 volatile bool wake_monitor_tesla_event_pending = false;
+volatile uint8_t wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_can_dispatch_pending = false;
 volatile uint32_t wake_monitor_can_dispatch_stage = 0U;
@@ -17,6 +18,7 @@ volatile uint8_t wake_monitor_som_off_countdown = 0U;
 volatile bool wake_monitor_can_armed = false;
 volatile uint8_t wake_monitor_can_baseline_countdown = 0U;
 volatile int8_t wake_monitor_tesla_counter = -1;
+volatile int8_t wake_monitor_tesla_door_counter = -1;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif
