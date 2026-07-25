@@ -18,13 +18,13 @@ volatile bool bootkick_wake_reset_attempted = false;
 volatile uint8_t bootkick_wake_final_countdown = 0U;
 volatile uint8_t bootkick_wake_post_reset_countdown = 0U;
 
-// Match the proven manual bootkick path closely enough for the Tres PMIC to
-// recognize the wake request under vehicle power conditions. Two seconds was
-// reliable on the bench, but released before the SoM responded in the car.
-#define BOOTKICK_WAKE_PULSE_S 20U
+// Match the proven scheduled bootkick self-test. A shorter CAN-triggered pulse
+// followed by the fast recovery reset can interrupt Tres while it is already
+// starting but has not produced UART or heartbeat activity yet.
+#define BOOTKICK_WAKE_PULSE_S 30U
 #define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
-#define BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S 5U
+#define BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S 30U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
 #define BOOTKICK_WAKE_FINAL_GRACE_S 60U
 #define BOOTKICK_WAKE_POST_RESET_RELEASE_S 2U
@@ -160,7 +160,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   if (debug_bootkick_countdown > 0U) {
     debug_bootkick_countdown -= 1U;
     if (debug_bootkick_countdown == 0U) {
-      debug_bootkick_hold_countdown = 30U;
+      debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
       bootkick_wake_pulse_active = true;
       wake_debug_stage(0x36U);
     }
