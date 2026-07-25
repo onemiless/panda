@@ -1,4 +1,5 @@
 #include "board/drivers/drivers.h"
+#include "board/drivers/bootkick_policy.h"
 #include "board/drivers/wake_debug.h"
 
 bool bootkick_reset_triggered = false;
@@ -23,6 +24,7 @@ volatile uint8_t bootkick_wake_post_reset_countdown = 0U;
 #define BOOTKICK_WAKE_PULSE_S 20U
 #define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
+#define BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S 5U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
 #define BOOTKICK_WAKE_FINAL_GRACE_S 60U
 #define BOOTKICK_WAKE_POST_RESET_RELEASE_S 2U
@@ -116,7 +118,8 @@ void bootkick_request_wake_pulse(uint32_t stage) {
   debug_bootkick_countdown = 0U;
   bootkick_wake_confirmation_pending = true;
   bootkick_wake_attempts = 1U;
-  bootkick_wake_retry_countdown = BOOTKICK_WAKE_RETRY_DELAY_S;
+  bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ?
+                                    BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S : BOOTKICK_WAKE_RETRY_DELAY_S;
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
@@ -180,11 +183,19 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   }
 
   if (bootkick_wake_confirmation_pending && !recent_heartbeat) {
+    const bool som_powered = current_board->read_som_gpio();
+    const bool tres_early_reset_ready = bootkick_tres_early_reset_ready(
+      hw_type == HW_TYPE_TRES, bootkick_wake_attempts, bootkick_wake_retry_countdown,
+      bootkick_wake_pulse_active, bootkick_wake_release_countdown, bootkick_wake_uart_seen,
+      som_powered, bootkick_wake_reset_attempted);
     if (!bootkick_wake_uart_seen && (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr)) {
       // UART activity means the SoM is already booting; another DC_IN edge could interrupt it.
       bootkick_wake_uart_seen = true;
       bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
-    } else if (!bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
+    } else if (!tres_early_reset_ready &&
+               !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
+               ((hw_type != HW_TYPE_TRES) || !som_powered) &&
+               !bootkick_wake_reset_attempted &&
                (bootkick_wake_attempts < BOOTKICK_WAKE_MAX_ATTEMPTS)) {
       if (bootkick_wake_retry_countdown > 0U) {
         bootkick_wake_retry_countdown -= 1U;
@@ -197,10 +208,16 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     }
   }
 
-  if (bootkick_wake_confirmation_pending && !recent_heartbeat && !bootkick_wake_uart_seen &&
-      !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
-      (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
-      !bootkick_wake_reset_attempted && (hw_type == HW_TYPE_TRES)) {
+  const bool tres_early_reset_ready = bootkick_tres_early_reset_ready(
+    hw_type == HW_TYPE_TRES, bootkick_wake_attempts, bootkick_wake_retry_countdown,
+    bootkick_wake_pulse_active, bootkick_wake_release_countdown, bootkick_wake_uart_seen,
+    current_board->read_som_gpio(), bootkick_wake_reset_attempted);
+  if (bootkick_wake_confirmation_pending && !recent_heartbeat &&
+      (tres_early_reset_ready ||
+       (!bootkick_wake_uart_seen && !current_board->read_som_gpio() &&
+        !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
+        (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
+        !bootkick_wake_reset_attempted && (hw_type == HW_TYPE_TRES)))) {
     // Tres has no DC_IN control. If repeated BOOTKICK pulses produce no SoM
     // UART activity, reset the powered-but-stalled SoM before holding BOOTKICK.
     bootkick_wake_reset_attempted = true;
@@ -271,8 +288,9 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     wake_debug_latch_success(0x33U);
   }
 
-  const bool wake_attempts_finished = (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
-                                      ((hw_type != HW_TYPE_TRES) || bootkick_wake_reset_attempted);
+  const bool wake_attempts_finished = (hw_type == HW_TYPE_TRES) ?
+                                        bootkick_wake_reset_attempted :
+                                        (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS);
   const bool wake_final_wait = bootkick_wake_uart_seen || wake_attempts_finished;
   const bool wake_output_idle = !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
                                 (bootkick_wake_post_reset_countdown == 0U) && (boot_state != BOOT_RESET);
