@@ -44,3 +44,19 @@ static inline bool tesla_door_wake_ready(uint8_t logical_bus, uint8_t len, int8_
   return (logical_bus == 0U) && (len == 7U) &&
          tesla_wake_counter_valid(previous_counter, counter) && door_open;
 }
+
+static inline bool tesla_front_door_latch_closed(const uint8_t *data) {
+  return (data[1] & 0x1U) != 0U;
+}
+
+static inline bool tesla_front_door_handle_pulled(const uint8_t *data) {
+  return (data[1] & 0x4U) != 0U;
+}
+
+static inline bool tesla_door_latch_wake_ready(uint8_t logical_bus, uint8_t len,
+                                               bool previous_known, bool previous_closed,
+                                               const uint8_t *data) {
+  const bool closed_to_open = previous_known && previous_closed && !tesla_front_door_latch_closed(data);
+  return (logical_bus == 0U) && (len == 8U) &&
+         (tesla_front_door_handle_pulled(data) || closed_to_open);
+}

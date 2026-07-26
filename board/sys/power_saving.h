@@ -19,6 +19,8 @@ volatile bool wake_monitor_can_armed = false;
 volatile uint8_t wake_monitor_can_baseline_countdown = 0U;
 volatile int8_t wake_monitor_tesla_counter = -1;
 volatile int8_t wake_monitor_tesla_door_counter = -1;
+volatile uint8_t wake_monitor_tesla_front_door_known_mask = 0U;
+volatile uint8_t wake_monitor_tesla_front_door_closed_mask = 0U;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif

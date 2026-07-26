@@ -66,6 +66,8 @@ extern volatile bool wake_monitor_can_armed;
 extern volatile uint8_t wake_monitor_can_baseline_countdown;
 extern volatile int8_t wake_monitor_tesla_counter;
 extern volatile int8_t wake_monitor_tesla_door_counter;
+extern volatile uint8_t wake_monitor_tesla_front_door_known_mask;
+extern volatile uint8_t wake_monitor_tesla_front_door_closed_mask;
 extern bool wake_can_rate;
 extern uint32_t wake_can_rate_cnt;
 

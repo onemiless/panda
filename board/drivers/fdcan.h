@@ -35,6 +35,24 @@ static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
     if (tesla_door_wake_ready(msg->bus, GET_LEN(msg), previous_counter, counter, door_open)) {
       source = TESLA_WAKE_SOURCE_DOOR;
     }
+  } else if (((msg->addr == 0x102U) || (msg->addr == 0x103U)) && (GET_LEN(msg) == 8)) {
+    // Some vehicles don't publish UI_warning until after the low-voltage
+    // power-state transition. Track the direct left/right front-door latch
+    // messages so opening either front door can wake Tres immediately.
+    const uint8_t door_mask = (msg->addr == 0x102U) ? 0x1U : 0x2U;
+    const bool previous_known = (wake_monitor_tesla_front_door_known_mask & door_mask) != 0U;
+    const bool previous_closed = (wake_monitor_tesla_front_door_closed_mask & door_mask) != 0U;
+    if (tesla_door_latch_wake_ready(msg->bus, GET_LEN(msg), previous_known, previous_closed, msg->data)) {
+      source = TESLA_WAKE_SOURCE_DOOR;
+    }
+    if (msg->bus == 0U) {
+      wake_monitor_tesla_front_door_known_mask |= door_mask;
+      if (tesla_front_door_latch_closed(msg->data)) {
+        wake_monitor_tesla_front_door_closed_mask |= door_mask;
+      } else {
+        wake_monitor_tesla_front_door_closed_mask &= (uint8_t)(~door_mask);
+      }
+    }
   }
   return source;
 }

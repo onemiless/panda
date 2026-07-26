@@ -69,6 +69,23 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!tesla_door_wake_ready(0U, 8U, 4, 5, true));
       assert(!tesla_door_wake_ready(0U, 7U, 4, 5, false));
       assert(!tesla_door_wake_ready(0U, 7U, 4, 6, true));
+
+      // On vehicles where UI_warning is not emitted during the initial door
+      // wake, use the direct VCLEFT/VCRIGHT latch message as a fallback. A
+      // handle pull is sufficient by itself; otherwise require a known
+      // closed-to-open transition so a door left open cannot cause a loop.
+      const uint8_t latch_closed[8] = {0U, 0x01U, 0U, 0U, 0U, 0U, 0U, 0U};
+      const uint8_t latch_open[8] = {0U, 0x00U, 0U, 0U, 0U, 0U, 0U, 0U};
+      const uint8_t handle_pulled[8] = {0U, 0x05U, 0U, 0U, 0U, 0U, 0U, 0U};
+      assert(tesla_front_door_latch_closed(latch_closed));
+      assert(!tesla_front_door_latch_closed(latch_open));
+      assert(tesla_front_door_handle_pulled(handle_pulled));
+      assert(tesla_door_latch_wake_ready(0U, 8U, true, true, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 8U, true, false, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 8U, false, false, latch_open));
+      assert(tesla_door_latch_wake_ready(0U, 8U, false, false, handle_pulled));
+      assert(!tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 7U, true, true, latch_open));
       return 0;
     }
     """
