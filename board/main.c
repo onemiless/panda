@@ -112,7 +112,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
-#define WAKE_MONITOR_CAN_BASELINE_S 10U
+#define WAKE_MONITOR_CAN_BASELINE_S 300U
 #define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
 
@@ -152,7 +152,6 @@ static void tick_handler(void) {
 
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {
-      uint8_t old_harness_status = prev_harness_status;
       prev_harness_status = harness.status;
       can_set_orientation(harness.status == HARNESS_STATUS_FLIPPED);
 
@@ -161,12 +160,6 @@ static void tick_handler(void) {
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready &&
-          (old_harness_status == HARNESS_STATUS_NC) &&
-          (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
-        bootkick_request_wake_pulse(0x37U);
-        wake_monitor_harness_requested = true;
-      }
     }
 
     // decimated to 1Hz
@@ -241,6 +234,10 @@ static void tick_handler(void) {
           wake_monitor_can_armed = true;
           wake_can_trace_clear_peak();
           wake_debug_stage(0x3FU);
+          // The only allowed wake source is now FDCAN2/bus 1 in STOP mode.
+          // Leaving monitor mode lets the normal low-power path enter STOP.
+          wake_monitor_enabled = false;
+          set_power_save_state(true);
         }
       }
 
@@ -314,10 +311,7 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && started && !wake_monitor_reset_requested) {
-        bootkick_request_wake_pulse(0x32U);
-        wake_monitor_reset_requested = true;
-      }
+      (void)wake_monitor_reset_requested;
       const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
       if (recent_heartbeat || !started) {
         wake_monitor_reset_requested = false;
@@ -359,8 +353,7 @@ static void tick_handler(void) {
         }
         wake_debug_stage(0x38U);
       }
-      bool wake_activity = wake_monitor_enabled && (wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_can_rate);
-      bootkick_tick(started || wake_activity, recent_heartbeat);
+      bootkick_tick(!wake_monitor_enabled && started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {

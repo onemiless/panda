@@ -63,6 +63,11 @@ void bootkick_debug_restore(void) {
       bootkick_wake_attempts = MAX(bootkick_wake_attempts, BOOTKICK_WAKE_MAX_ATTEMPTS);
     } else {
       bootkick_wake_attempts = MAX(bootkick_wake_attempts, 1U);
+      // A bus-1 STOP wake is persisted as 0x34. Resume it immediately after
+      // reset instead of waiting through the normal retry delay.
+      debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
+      bootkick_wake_pulse_active = true;
+      bootkick_wake_retry_countdown = 0U;
     }
   }
 }

@@ -85,11 +85,15 @@ static void enter_stop_mode(void) {
   // init GPIO to lowest power state
   current_board->set_bootkick(BOOT_STANDBY);
   current_board->set_amp_enabled(false);
-  // Keep CAN transceivers awake in stop mode so vehicle activity on any
-  // connected bus can reach an FDCAN RX EXTI line and wake/reset panda.
+  // Strict offline wake: the capture evidence identifies logical CAN bus 1
+  // (FDCAN2) as the first physical wake source. Do not leave the other buses
+  // powered or armed, since STOP mode cannot inspect a CAN identifier before
+  // an RX edge wakes the MCU.
+  const bool normal_harness = harness.status != HARNESS_STATUS_FLIPPED;
   for (uint8_t i = 1U; i <= 4U; i++) {
-    current_board->enable_can_transceiver(i, true);
+    current_board->enable_can_transceiver(i, false);
   }
+  current_board->enable_can_transceiver(normal_harness ? 2U : 4U, true);
   wake_debug_stage(0x13U);
 
   // disable ADCs
@@ -105,46 +109,15 @@ static void enter_stop_mode(void) {
   register_clear_bits(&(RCC->AHB4LPENR), RCC_AHB4LPENR_SRAM4LPEN);
   register_clear_bits(&(RCC->AHB3LPENR), RCC_AHB3LPENR_AXISRAMLPEN);
 
-  // SBU pins to input for EXTI wakeup
-  set_gpio_mode(current_board->harness_config->GPIO_SBU1,
-                current_board->harness_config->pin_SBU1, MODE_INPUT);
-  set_gpio_mode(current_board->harness_config->GPIO_SBU2,
-                current_board->harness_config->pin_SBU2, MODE_INPUT);
-
-  // EXTI1: SBU2 (PA1)
-  // EXTI4: SBU1 (PC4)
-  register_set(&(SYSCFG->EXTICR[0]), SYSCFG_EXTICR1_EXTI1_PA, 0xF0U);
-  register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI4_PC, 0xFU);
-  register_set_bits(&(EXTI->IMR1), (1U << 1) | (1U << 4));
-  register_set_bits(&(EXTI->EMR1), (1U << 1) | (1U << 4));
-  register_set_bits(&(EXTI->RTSR1), (1U << 1) | (1U << 4));
-  register_set_bits(&(EXTI->FTSR1), (1U << 1) | (1U << 4));
-
-  // EXTI for CAN wakeup
-  // EXTI8:  FDCAN1 RX (PB8)
-  // EXTI5:  FDCAN2 RX (PB5)
-  // EXTI9:  FDCAN3 RX on tres (PG9)
-  // EXTI12: FDCAN2 alt RX (PB12) on tres or FDCAN3 RX (PD12) on cuatro.
-  // PB12 and PD12 cannot be routed to EXTI12 simultaneously. On cuatro,
-  // preserve FDCAN3 wake; FDCAN2 normal is already covered by PB5/EXTI5.
-  set_gpio_mode(GPIOB, 8, MODE_INPUT);
-  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
-  set_gpio_mode(GPIOB, 5, MODE_INPUT);
-  register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
-  if (hw_type == HW_TYPE_TRES) {
-    set_gpio_mode(GPIOG, 9, MODE_INPUT);
-    register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
-  }
-  if (hw_type == HW_TYPE_CUATRO) {
-    set_gpio_mode(GPIOD, 12, MODE_INPUT);
-    register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PD, 0xFU);
+  // Logical bus 1 is FDCAN2. Its active RX is PB5 with a normal harness and
+  // PB12 with a flipped harness. Arm exactly that EXTI line.
+  const uint32_t can_exti_line = normal_harness ? (1UL << 5) : (1UL << 12);
+  if (normal_harness) {
+    set_gpio_mode(GPIOB, 5, MODE_INPUT);
+    register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
   } else {
     set_gpio_mode(GPIOB, 12, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
-  }
-  uint32_t can_exti_line = (1UL << 8) | (1UL << 5) | (1UL << 12);
-  if (hw_type == HW_TYPE_TRES) {
-    can_exti_line |= (1UL << 9);
   }
   wake_debug_can_exti(can_exti_line);
   register_set_bits(&(EXTI->IMR1), can_exti_line);
@@ -155,7 +128,7 @@ static void enter_stop_mode(void) {
   wake_debug_stage(0x14U);
 
   // clear pending EXTI
-  EXTI->PR1 = (1U << 1) | (1U << 4) | can_exti_line;
+  EXTI->PR1 = can_exti_line;
 
   // reset if ignition just came on before going to sleep
   if (harness_check_ignition()) {
@@ -180,10 +153,11 @@ static void enter_stop_mode(void) {
     NVIC->ICPR[i] = 0xFFFFFFFFU;
   }
   // enable only wakeup EXTI interrupts
-  NVIC_EnableIRQ(EXTI1_IRQn);     // SBU2 (PA1)
-  NVIC_EnableIRQ(EXTI4_IRQn);     // SBU1 (PC4)
-  NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 RX (PB8), FDCAN2 RX (PB5), FDCAN3 RX on tres (PG9)
-  NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN2 alt RX (PB12), FDCAN3 RX on cuatro (PD12)
+  if (normal_harness) {
+    NVIC_EnableIRQ(EXTI9_5_IRQn);   // FDCAN2 RX PB5
+  } else {
+    NVIC_EnableIRQ(EXTI15_10_IRQn); // FDCAN2 RX PB12
+  }
 
   wake_debug_exti_snapshot(false);
   wake_debug_stage(0x16U);
@@ -192,6 +166,12 @@ static void enter_stop_mode(void) {
   __WFI();
 
   wake_debug_exti_snapshot(true);
-  wake_debug_stage(0x17U);
+  if ((EXTI->PR1 & can_exti_line) != 0U) {
+    // Persist a bootkick-recognised cause before the reset. The restored
+    // state starts exactly one SoM wake pulse after Panda reinitializes.
+    wake_debug_stage(0x34U);
+  } else {
+    wake_debug_stage(0x17U);
+  }
   NVIC_SystemReset();
 }
