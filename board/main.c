@@ -235,7 +235,9 @@ static void tick_handler(void) {
           wake_can_trace_clear_peak();
           wake_debug_stage(0x3FU);
           // The only allowed wake source is now FDCAN2/bus 1 in STOP mode.
-          // Leaving monitor mode lets the normal low-power path enter STOP.
+          // Do not use read_som_gpio() to gate this transition. On Tres the
+          // GPIO can stay high even after the SoM has fully powered down.
+          wake_monitor_strict_stop_pending = true;
           wake_monitor_enabled = false;
           set_power_save_state(true);
         }
@@ -562,9 +564,12 @@ int main(void) {
         }
       #endif
     } else {
-      if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) && !current_board->read_som_gpio() && !wake_monitor_enabled && !bootkick_debug_active()) {
+      const bool normal_stop_allowed = !current_board->read_som_gpio();
+      const bool strict_stop_allowed = wake_monitor_strict_stop_pending;
+      if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) &&
+          (normal_stop_allowed || strict_stop_allowed) && !wake_monitor_enabled && !bootkick_debug_active()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
+        enter_stop_mode(); // strict path wakes only on physical CAN bus 1 RX
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       __WFI();

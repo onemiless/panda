@@ -73,7 +73,7 @@ void bootkick_debug_restore(void) {
 }
 
 void bootkick_debug_schedule(uint16_t delay_s) {
-  debug_bootkick_countdown = (delay_s > UINT8_MAX) ? UINT8_MAX : delay_s;
+  debug_bootkick_countdown = delay_s;
   debug_bootkick_hold_countdown = 0U;
   bootkick_wake_pulse_active = false;
   bootkick_wake_release_countdown = 0U;

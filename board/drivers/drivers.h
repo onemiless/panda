@@ -63,6 +63,7 @@ extern volatile bool wake_monitor_som_off_seen;
 extern volatile bool wake_monitor_som_off_ready;
 extern volatile uint8_t wake_monitor_som_off_countdown;
 extern volatile bool wake_monitor_can_armed;
+extern volatile bool wake_monitor_strict_stop_pending;
 extern volatile uint16_t wake_monitor_can_baseline_countdown;
 extern volatile int8_t wake_monitor_tesla_counter;
 extern volatile int8_t wake_monitor_tesla_door_counter;
