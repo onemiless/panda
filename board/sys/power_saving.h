@@ -20,9 +20,6 @@ volatile bool wake_monitor_can_armed = false;
 // This is deliberately independent of the SoM GPIO: on Tres that GPIO can
 // remain high after Linux has powered down.
 volatile bool wake_monitor_strict_stop_pending = false;
-// Count only physical bus 1 silence. STOP wakes on that bus, so background
-// traffic on the other buses must not keep the Panda awake.
-volatile uint16_t wake_monitor_bus1_quiet_seconds = 0U;
 volatile int8_t wake_monitor_tesla_counter = -1;
 volatile int8_t wake_monitor_tesla_door_counter = -1;
 volatile uint8_t wake_monitor_tesla_front_door_known_mask = 0U;
