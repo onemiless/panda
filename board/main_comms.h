@@ -113,7 +113,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_som_off_countdown = 0U;
       wake_monitor_can_armed = false;
       wake_monitor_strict_stop_pending = false;
-      wake_monitor_can_baseline_countdown = 0U;
+      wake_monitor_bus1_quiet_seconds = 0U;
       wake_monitor_tesla_counter = -1;
       wake_monitor_tesla_door_counter = -1;
       wake_monitor_tesla_front_door_known_mask = 0U;

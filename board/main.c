@@ -112,7 +112,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
-#define WAKE_MONITOR_CAN_BASELINE_S 300U
+#define WAKE_MONITOR_BUS1_QUIET_S 300U
 #define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
 
@@ -195,7 +195,7 @@ static void tick_handler(void) {
             wake_monitor_som_off_ready = false;
             wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
             wake_monitor_can_armed = false;
-            wake_monitor_can_baseline_countdown = WAKE_MONITOR_CAN_BASELINE_S;
+            wake_monitor_bus1_quiet_seconds = 0U;
             wake_monitor_can_activity_countdown = 0U;
             for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
               wake_monitor_can_baseline[i] = rx_per_bus[i];
@@ -216,21 +216,25 @@ static void tick_handler(void) {
           wake_monitor_som_off_seen = false;
           wake_monitor_som_off_countdown = 0U;
           wake_monitor_can_armed = false;
-          wake_monitor_can_baseline_countdown = 0U;
+          wake_monitor_bus1_quiet_seconds = 0U;
           wake_monitor_can_activity_countdown = 0U;
         } else {
         }
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready && !wake_monitor_can_armed) {
-        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-          wake_monitor_can_baseline[i] = wake_monitor_can_baseline[i] - (wake_monitor_can_baseline[i] >> 2U) +
-                                         (rx_per_bus[i] >> 2U);
+        // This mirrors the capture tool's quiet interval semantics: only
+        // enter STOP after bus 1 has been continuously silent. The captured
+        // Tesla wake source is bus 1, while bus 0/2 traffic is irrelevant to
+        // this strictly bus-1-only EXTI wake path.
+        if (rx_per_bus[1] == 0U) {
+          if (wake_monitor_bus1_quiet_seconds < WAKE_MONITOR_BUS1_QUIET_S) {
+            wake_monitor_bus1_quiet_seconds += 1U;
+          }
+        } else {
+          wake_monitor_bus1_quiet_seconds = 0U;
         }
-        if (wake_monitor_can_baseline_countdown > 0U) {
-          wake_monitor_can_baseline_countdown -= 1U;
-        }
-        if (wake_monitor_can_baseline_countdown == 0U) {
+        if (wake_monitor_bus1_quiet_seconds >= WAKE_MONITOR_BUS1_QUIET_S) {
           wake_monitor_can_armed = true;
           wake_can_trace_clear_peak();
           wake_debug_stage(0x3FU);
@@ -343,7 +347,7 @@ static void tick_handler(void) {
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
-        wake_monitor_can_baseline_countdown = 0U;
+        wake_monitor_bus1_quiet_seconds = 0U;
         wake_monitor_can_activity_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_can_dispatch_pending = false;
