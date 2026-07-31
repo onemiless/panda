@@ -448,6 +448,12 @@ int main(void) {
 
   // init board
   current_board->init();
+  if (bootkick_wake_waiting_for_som_off) {
+    // A pre-STOP ignition edge can arrive while the SoM is still shutting
+    // down. Release BOOTKICK immediately after GPIO initialization so the
+    // deferred wake path can create a fresh edge after SoM power is gone.
+    current_board->set_bootkick(BOOT_STANDBY);
+  }
   current_board->set_can_mode(CAN_MODE_NORMAL);
   harness_init();
 

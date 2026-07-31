@@ -96,3 +96,39 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
     check=True,
   )
   subprocess.run([str(executable)], check=True)
+
+
+def test_prestop_ignition_wake_waits_for_som_power_off(tmp_path):
+  source = tmp_path / "prestop_ignition_wake_test.c"
+  executable = tmp_path / "prestop_ignition_wake_test"
+  source.write_text(
+    """
+    #include <assert.h>
+    #include "board/drivers/bootkick_policy.h"
+
+    int main(void) {
+      assert(bootkick_restore_waits_for_som_off(0x32U, 0U));
+      assert(!bootkick_restore_waits_for_som_off(0x32U, 1U));
+      assert(!bootkick_restore_waits_for_som_off(0x34U, 0U));
+
+      uint8_t off_confirm = BOOTKICK_SOM_OFF_CONFIRM_S;
+      assert(bootkick_deferred_wake_step(false, true, &off_confirm) == BOOTKICK_DEFERRED_WAIT);
+      assert(off_confirm == BOOTKICK_SOM_OFF_CONFIRM_S);
+
+      assert(bootkick_deferred_wake_step(false, false, &off_confirm) == BOOTKICK_DEFERRED_WAIT);
+      assert(off_confirm == 1U);
+      assert(bootkick_deferred_wake_step(false, false, &off_confirm) == BOOTKICK_DEFERRED_START);
+      assert(off_confirm == 0U);
+
+      off_confirm = BOOTKICK_SOM_OFF_CONFIRM_S;
+      assert(bootkick_deferred_wake_step(true, true, &off_confirm) == BOOTKICK_DEFERRED_ALREADY_ALIVE);
+      return 0;
+    }
+    """
+  )
+
+  subprocess.run(
+    [os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Werror", "-I", str(PANDA_ROOT), str(source), "-o", str(executable)],
+    check=True,
+  )
+  subprocess.run([str(executable)], check=True)

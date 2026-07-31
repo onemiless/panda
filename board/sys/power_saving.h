@@ -135,7 +135,10 @@ static void enter_stop_mode(void) {
 
   // reset if ignition just came on before going to sleep
   if (harness_check_ignition()) {
-    wake_debug_stage(0x15U);
+    // The SoM may still be completing shutdown, so an immediate BOOTKICK
+    // assertion can be lost. Persist a deferred wake request across the Panda
+    // reset; bootkick will wait for SoM power-off before creating a fresh edge.
+    wake_debug_stage(BOOTKICK_WAKE_PRESTOP_IGNITION_PENDING_STAGE);
     NVIC_SystemReset();
   }
 
