@@ -26,10 +26,18 @@ def objcopy(source, target, env, for_signature):
 
 def get_version(builder, build_type):
   try:
-    git = subprocess.check_output(["git", "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
+    panda_git = subprocess.check_output(["git", "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
   except subprocess.CalledProcessError:
-    git = "unknown"
-  return f"{builder}-{git}-{build_type}"
+    panda_git = "unknown"
+  try:
+    # Tesla safety policy lives in opendbc, but Panda previously stamped only
+    # its own revision. An opendbc safety update could therefore leave an old
+    # firmware image running after a normal code update.
+    opendbc_root = os.path.dirname(opendbc.__file__)
+    opendbc_git = subprocess.check_output(["git", "-C", opendbc_root, "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
+  except (OSError, subprocess.CalledProcessError):
+    opendbc_git = "unknown"
+  return f"{builder}-{panda_git}-{opendbc_git}-{build_type}"
 
 def get_key_header(name):
   from Crypto.PublicKey import RSA
