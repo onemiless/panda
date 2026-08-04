@@ -111,6 +111,8 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
+#define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
+#define WAKE_MONITOR_CAN_RATE_DELTA 50U
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -119,6 +121,12 @@ static void tick_handler(void) {
   static uint8_t prev_harness_status = HARNESS_STATUS_NC;
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
+  static bool wake_monitor_reset_requested = false;
+  static bool wake_monitor_harness_requested = false;
+  static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint8_t wake_monitor_can_activity_countdown = 0U;
+  static uint16_t wake_monitor_off_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -149,6 +157,7 @@ static void tick_handler(void) {
       can_init_all();
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
+
     }
 
     // decimated to 1Hz
@@ -171,9 +180,145 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
+      uint32_t rx_per_bus[PANDA_CAN_CNT] = {0U, 0U, 0U};
+      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+        rx_per_bus[i] = can_health[i].total_rx_cnt - wake_monitor_prev_rx[i];
+        wake_monitor_prev_rx[i] = can_health[i].total_rx_cnt;
+      }
+      if (wake_monitor_enabled) {
+        if (!recent_heartbeat) {
+          if (!wake_monitor_som_off_seen) {
+            wake_monitor_off_seconds = 0U;
+            wake_monitor_som_off_seen = true;
+            wake_monitor_som_off_ready = true;
+            wake_monitor_som_off_countdown = 0U;
+            wake_monitor_can_armed = true;
+            wake_monitor_can_activity_countdown = 0U;
+            wake_can_trace_clear_peak();
+            wake_debug_stage(0x3FU);
+            // Bus 1 quiet was already proved while the SoM was alive. Once
+            // the shutdown heartbeat disappears, enter strict STOP without
+            // waiting again: the next bus-1 edge is the wake trigger.
+            wake_monitor_strict_stop_pending = true;
+            wake_monitor_enabled = false;
+            set_power_save_state(true);
+          }
+        } else {
+        }
+      }
+
+      if (bootkick_tesla_event_ready(
+            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+            wake_monitor_tesla_event_pending, wake_monitor_can_wake_requested)) {
+        const uint8_t tesla_event_source = wake_monitor_tesla_event_source;
+        wake_monitor_can_wake_requested = true;
+        wake_monitor_tesla_event_pending = false;
+        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+        wake_monitor_can_dispatch_pending = false;
+        wake_monitor_can_dispatch_stage = 0U;
+        if (tesla_event_source == TESLA_WAKE_SOURCE_DOOR) {
+          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_DOOR);
+        } else if (tesla_event_source == TESLA_WAKE_SOURCE_POWER) {
+          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_POWER);
+        } else {
+        }
+        wake_debug_stage(0x42U);
+        // Use the same simple delayed pulse path proven by the on-device
+        // bootkick self-test. The confirmation/retry path can remain stuck at
+        // its initial 0x34 stage while the SoM is down.
+        bootkick_debug_schedule(1U);
+      }
+
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
+        wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
+        bool can_rate_jump = false;
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          const uint32_t baseline = wake_monitor_can_baseline[i];
+          const uint32_t delta = (rx_per_bus[i] > baseline) ? (rx_per_bus[i] - baseline) : 0U;
+          const uint32_t threshold = MAX(WAKE_MONITOR_CAN_RATE_DELTA, baseline >> 1U);
+          can_rate_jump |= delta >= threshold;
+          if (delta < threshold) {
+            wake_monitor_can_baseline[i] = baseline - (baseline >> 3U) + (rx_per_bus[i] >> 3U);
+          }
+        }
+        wake_monitor_can_activity_countdown = can_rate_jump ? (wake_monitor_can_activity_countdown + 1U) : 0U;
+        if (wake_monitor_can_activity_countdown >= WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S) {
+          wake_can_rate = true;
+          wake_can_rate_cnt = 0U;
+          wake_monitor_can_wake_requested = true;
+          wake_monitor_can_dispatch_pending = true;
+          wake_monitor_can_dispatch_stage = 0x35U;
+          wake_debug_stage(0x43U);
+          if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
+            wake_monitor_can_dispatch_pending = false;
+            wake_monitor_can_dispatch_stage = 0U;
+          }
+        }
+      } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
+        wake_can_rate = false;
+      } else {
+      }
+
+      // A Tesla wake frame can arrive on the FDCAN interrupt boundary while
+      // the 1 Hz monitor is persisting the just-armed (0x3F) stage. Recover
+      // the exact stranded signature instead of leaving wake_requested set
+      // without ever dispatching BOOTKICK.
+      if (bootkick_wake_request_needs_dispatch(
+            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_wake_requested,
+            wake_monitor_can_dispatch_pending, bootkick_wake_confirmation_pending, bootkick_wake_pulse_active,
+            bootkick_wake_attempts, wake_debug.stage)) {
+        const uint32_t dispatch_stage = ((wake_monitor_can_dispatch_stage == 0x35U) || (wake_debug.stage == 0x43U)) ?
+                                          0x35U : 0x34U;
+        if (bootkick_request_wake_pulse(dispatch_stage)) {
+          wake_monitor_can_dispatch_pending = false;
+          wake_monitor_can_dispatch_stage = 0U;
+        }
+      }
+
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      bootkick_tick(started, recent_heartbeat);
+      (void)wake_monitor_reset_requested;
+      const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
+      if (recent_heartbeat || !started) {
+        wake_monitor_reset_requested = false;
+      }
+
+      if (wake_monitor_enabled && !recent_heartbeat) {
+        if (wake_monitor_off_seconds < UINT16_MAX) {
+          wake_monitor_off_seconds += 1U;
+        }
+        const uint8_t trace_flags =
+          ((uint8_t)wake_monitor_enabled * WAKE_CAN_TRACE_FLAG_MONITOR_ENABLED) |
+          ((uint8_t)wake_monitor_som_off_seen * WAKE_CAN_TRACE_FLAG_SOM_OFF_SEEN) |
+          ((uint8_t)wake_monitor_som_off_ready * WAKE_CAN_TRACE_FLAG_SOM_OFF_READY) |
+          ((uint8_t)wake_monitor_can_armed * WAKE_CAN_TRACE_FLAG_CAN_ARMED) |
+          ((uint8_t)wake_monitor_can_wake_requested * WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED) |
+          ((uint8_t)(wake_monitor_can_activity_countdown > 0U) * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
+          ((uint8_t)ignition_can * WAKE_CAN_TRACE_FLAG_IGNITION_CAN) |
+          ((uint8_t)harness_check_ignition() * WAKE_CAN_TRACE_FLAG_IGNITION_LINE);
+        wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
+      }
+
+      if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
+        wake_monitor_enabled = false;
+        wake_monitor_tesla_event_pending = false;
+        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+        wake_monitor_som_off_seen = false;
+        wake_monitor_som_off_ready = false;
+        wake_monitor_som_off_countdown = 0U;
+        wake_monitor_can_armed = false;
+        wake_monitor_can_activity_countdown = 0U;
+        wake_monitor_can_wake_requested = false;
+        wake_monitor_can_dispatch_pending = false;
+        wake_monitor_can_dispatch_stage = 0U;
+        wake_monitor_harness_requested = false;
+        wake_can_rate = false;
+        if (wake_was_requested) {
+          wake_debug_latch_success(wake_debug.stage);
+        }
+        wake_debug_stage(0x38U);
+      }
+      bootkick_tick(!wake_monitor_enabled && started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {
@@ -233,7 +378,10 @@ static void tick_handler(void) {
             set_safety_mode(SAFETY_SILENT, 0U);
           }
 
-          if (!power_save_enabled) {
+          if (wake_monitor_enabled && power_save_enabled) {
+            set_power_save_state(false);
+            wake_debug_stage(0x31U);
+          } else if (!wake_monitor_enabled && !power_save_enabled) {
             set_power_save_state(true);
           }
 
@@ -258,6 +406,7 @@ static void tick_handler(void) {
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
+      wake_can_rate_cnt += 1U;
 
       // synchronous safety check
       safety_tick(&current_safety_config);
@@ -285,6 +434,8 @@ int main(void) {
   led_set(LED_RED, true);
   led_set(LED_GREEN, true);
   adc_init(ADC1);
+  wake_debug_init();
+  bootkick_debug_restore();
 
   // print hello
   print("\n\n\n************************ MAIN START ************************\n");
@@ -297,6 +448,12 @@ int main(void) {
 
   // init board
   current_board->init();
+  if (bootkick_wake_waiting_for_som_off) {
+    // A pre-STOP ignition edge can arrive while the SoM is still shutting
+    // down. Release BOOTKICK immediately after GPIO initialization so the
+    // deferred wake path can create a fresh edge after SoM power is gone.
+    current_board->set_bootkick(BOOT_STANDBY);
+  }
   current_board->set_can_mode(CAN_MODE_NORMAL);
   harness_init();
 
@@ -376,9 +533,12 @@ int main(void) {
         }
       #endif
     } else {
-      if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()) {
+      const bool normal_stop_allowed = !current_board->read_som_gpio();
+      const bool strict_stop_allowed = wake_monitor_strict_stop_pending;
+      if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) &&
+          (normal_stop_allowed || strict_stop_allowed) && !wake_monitor_enabled && !bootkick_debug_active()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
+        enter_stop_mode(); // strict path wakes only on physical CAN bus 1 RX
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       // cppcheck-suppress misra-c2012-17.3 ; CMSIS __WFI macro expands to inline asm

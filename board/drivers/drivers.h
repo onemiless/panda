@@ -12,6 +12,10 @@
 extern bool bootkick_reset_triggered;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat);
+void bootkick_request_reset_pulse(void);
+bool bootkick_request_wake_pulse(uint32_t stage);
+void bootkick_cancel_wake_pulse(void);
+void bootkick_clear_wake_confirmation(void);
 
 // ******************** can_common ********************
 
@@ -44,6 +48,28 @@ extern can_health_t can_health[PANDA_CAN_CNT];
 // Ignition detected from CAN messages
 extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
+
+#define TESLA_WAKE_SOURCE_NONE 0U
+#define TESLA_WAKE_SOURCE_POWER 1U
+#define TESLA_WAKE_SOURCE_DOOR 2U
+
+extern volatile bool wake_monitor_enabled;
+extern volatile bool wake_monitor_tesla_event_pending;
+extern volatile uint8_t wake_monitor_tesla_event_source;
+extern volatile bool wake_monitor_can_wake_requested;
+extern volatile bool wake_monitor_can_dispatch_pending;
+extern volatile uint32_t wake_monitor_can_dispatch_stage;
+extern volatile bool wake_monitor_som_off_seen;
+extern volatile bool wake_monitor_som_off_ready;
+extern volatile uint8_t wake_monitor_som_off_countdown;
+extern volatile bool wake_monitor_can_armed;
+extern volatile bool wake_monitor_strict_stop_pending;
+extern volatile int8_t wake_monitor_tesla_counter;
+extern volatile int8_t wake_monitor_tesla_door_counter;
+extern volatile uint8_t wake_monitor_tesla_front_door_known_mask;
+extern volatile uint8_t wake_monitor_tesla_front_door_closed_mask;
+extern bool wake_can_rate;
+extern uint32_t wake_can_rate_cnt;
 
 extern bool can_silent;
 extern bool can_loopback;

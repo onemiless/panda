@@ -139,6 +139,9 @@ class Panda:
   CAN_PACKET_VERSION = compute_version_hash(os.path.join(opendbc.INCLUDE_PATH, "opendbc/safety/can.h"))
   HEALTH_PACKET_VERSION = compute_version_hash(os.path.join(BASEDIR, "board/health.h"))
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
+  WAKE_DEBUG_STRUCT = struct.Struct("<14I8B")
+  WAKE_SUCCESS_STRUCT = struct.Struct("<10I")
+  WAKE_CAN_TRACE_STRUCT = struct.Struct("<II7HBB")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -510,6 +513,9 @@ class Panda:
   def call_control_api(self, msg):
     self._handle.controlWrite(Panda.REQUEST_OUT, msg, 0, 0, b'')
 
+  def enable_deepsleep(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'')
+
   # ******************* health *******************
 
   @ensure_health_packet_version
@@ -546,6 +552,97 @@ class Panda:
       "controls_allowed_lateral": a[26],
       "controls_allowed_longitudinal": a[27],
     }
+
+  def wake_debug(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd5, 0, 0, self.WAKE_DEBUG_STRUCT.size)
+    a = self.WAKE_DEBUG_STRUCT.unpack(dat)
+    return {
+      "magic": a[0],
+      "boot_count": a[1],
+      "reset_reason": a[2],
+      "stage": a[3],
+      "enter_count": a[4],
+      "wfi_return_count": a[5],
+      "pre_wfi_exti_pr1": a[6],
+      "post_wfi_exti_pr1": a[7],
+      "exti_imr1": a[8],
+      "exti_rtsr1": a[9],
+      "exti_ftsr1": a[10],
+      "hw_type_snapshot": a[11] & 0xFF,
+      "bootkick_phase_mask": (a[11] >> 8) & 0xFF,
+      "bootkick_pin_levels": (a[11] >> 16) & 0xFF,
+      "bootkick_wake_attempts": (a[11] >> 24) & 0x3,
+      "bootkick_wake_retry_countdown": (a[11] >> 26) & 0xF,
+      "bootkick_wake_uart_seen": bool((a[11] >> 30) & 0x1),
+      "bootkick_wake_reset_attempted": bool((a[11] >> 31) & 0x1),
+      "can_exti_line": a[12] & 0xFFFF,
+      "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFF,
+      "bootkick_debug_hold_countdown": (a[12] >> 24) & 0xFF,
+      "exti_emr1": a[13],
+      "harness_status": a[14],
+      "ignition_line": a[15],
+      "ignition_can_seen": a[16],
+      "som_gpio": a[17],
+      "bootkick_state": a[18],
+      "bootkick_prev_state": a[19],
+      "bootkick_waiting_countdown": a[20],
+      "bootkick_reset_countdown": a[21],
+    }
+
+  def wake_success(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd9, 0, 0, self.WAKE_SUCCESS_STRUCT.size)
+    a = self.WAKE_SUCCESS_STRUCT.unpack(dat)
+    return {
+      "magic": a[0],
+      "latched": a[1],
+      "stage": a[2],
+      "boot_count": a[3],
+      "reset_reason": a[4],
+      "can_exti_line": a[5],
+      "harness_status": a[6],
+      "ignition_line": a[7],
+      "ignition_can_seen": a[8],
+      "som_gpio": a[9],
+    }
+
+  def wake_can_trace(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xda, 0, 0, self.WAKE_CAN_TRACE_STRUCT.size)
+    a = self.WAKE_CAN_TRACE_STRUCT.unpack(dat)
+    flags = (a[1] >> 16) & 0xFF
+    peak_bus = (a[1] >> 24) & 0xFF
+    wake_source = {
+      0xFD: "teslaDoor",
+      0xFE: "teslaPower",
+    }.get(peak_bus)
+    tesla_meta = a[9]
+    tesla_seen = bool(tesla_meta & 0x80)
+    return {
+      "magic": a[0],
+      "off_seconds": a[1] & 0xFFFF,
+      "monitor_enabled": bool(flags & (1 << 0)),
+      "som_off_seen": bool(flags & (1 << 1)),
+      "som_off_ready": bool(flags & (1 << 2)),
+      "can_armed": bool(flags & (1 << 3)),
+      "wake_requested": bool(flags & (1 << 4)),
+      "rate_candidate": bool(flags & (1 << 5)),
+      "ignition_can": bool(flags & (1 << 6)),
+      "ignition_line": bool(flags & (1 << 7)),
+      "peak_bus": None if peak_bus >= 0xFD else peak_bus,
+      "wake_source": wake_source,
+      "peak_rx_per_sec": [a[2], a[3], a[4]],
+      "baseline_per_sec": [a[5], a[6], a[7]],
+      "peak_delta": a[8],
+      "tesla_seen": tesla_seen,
+      "tesla_counter_valid": tesla_seen and bool(tesla_meta & 0x40),
+      "tesla_power_state": (tesla_meta >> 4) & 0x3 if tesla_seen else None,
+      "tesla_logical_bus": (tesla_meta >> 2) & 0x3 if tesla_seen else None,
+      "tesla_physical_bus": tesla_meta & 0x3 if tesla_seen else None,
+      "tesla_previous_counter": (a[10] >> 4) & 0xF if tesla_seen else None,
+      "tesla_counter": a[10] & 0xF if tesla_seen else None,
+    }
+
+  def clear_wake_success(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xd7, 0, 0, b'')
 
   @ensure_health_packet_version
   def can_health(self, can_number):
@@ -607,7 +704,7 @@ class Panda:
     return bytes(part_1 + part_2)
 
   def get_type(self):
-    return b'\x09'
+    return self._handle.controlRead(Panda.REQUEST_IN, 0xc1, 0, 0, 0x40)
 
   def get_packets_versions(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, 0xdd, 0, 0, 8)
@@ -661,6 +758,9 @@ class Panda:
 
   def enter_stop_mode(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'', expect_disconnect=True)
+
+  def schedule_bootkick_test(self, delay_s):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb6, int(delay_s), 0, b'')
 
   def set_safety_mode(self, mode=CarParams.SafetyModel.silent, param=0):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xdc, mode, param, b'')

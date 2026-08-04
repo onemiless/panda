@@ -100,14 +100,39 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[1] = ((fan_state.rpm & 0xFF00U) >> 8U);
       resp_len = 2;
       break;
-    // **** 0xb5: request deep sleep, wakes on CAN or SBU
-    #ifdef ALLOW_DEBUG
+    // **** 0xb5: keep panda awake as a CAN wake monitor while SoM is down
     case 0xb5:
+      wake_monitor_enabled = true;
+      wake_monitor_tesla_event_pending = false;
+      wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+      wake_monitor_can_wake_requested = false;
+      wake_monitor_can_dispatch_pending = false;
+      wake_monitor_can_dispatch_stage = 0U;
+      wake_monitor_som_off_seen = false;
+      wake_monitor_som_off_ready = false;
+      wake_monitor_som_off_countdown = 0U;
+      wake_monitor_can_armed = false;
+      wake_monitor_strict_stop_pending = false;
+      wake_monitor_tesla_counter = -1;
+      wake_monitor_tesla_door_counter = -1;
+      wake_monitor_tesla_front_door_known_mask = 0U;
+      wake_monitor_tesla_front_door_closed_mask = 0U;
+      wake_can_rate = false;
+      wake_can_rate_cnt = 0U;
+      wake_debug_clear_success();
+      wake_can_trace_reset();
+      bootkick_cancel_wake_pulse();
+      bootkick_clear_wake_confirmation();
       set_safety_mode(SAFETY_SILENT, 0U);
-      set_power_save_state(true);
-      stop_mode_requested = true;
+      set_power_save_state(false);
+      current_board->set_bootkick(BOOT_STANDBY);
+      stop_mode_requested = false;
+      wake_debug_stage(0x30U);
       break;
-    #endif
+    // **** 0xb6: schedule bootkick test after N seconds
+    case 0xb6:
+      bootkick_debug_schedule(req->param1);
+      break;
     // **** 0xc0: reset communications state
     case 0xc0:
       comms_can_reset();
@@ -210,6 +235,29 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         int code_len = _app_start[0];
         (void)memcpy(resp, &code[code_len + 64], resp_len);
       }
+      break;
+    // **** 0xd5: get wake debug packet
+    case 0xd5:
+      COMPILE_TIME_ASSERT(sizeof(wake_debug_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(wake_debug);
+      (void)memcpy(resp, (uint8_t*)(&wake_debug), resp_len);
+      break;
+    // **** 0xd7: clear latched offline wake success
+    case 0xd7:
+      wake_debug_clear_success();
+      break;
+    // **** 0xd9: get latched offline wake success
+    case 0xd9:
+      COMPILE_TIME_ASSERT(sizeof(wake_success_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(wake_success);
+      (void)memcpy(resp, (uint8_t*)(&wake_success), resp_len);
+      break;
+    // **** 0xda: get persistent CAN wake trace
+    case 0xda:
+      COMPILE_TIME_ASSERT(sizeof(wake_can_trace_t) <= USBPACKET_MAX_SIZE);
+      COMPILE_TIME_ASSERT((WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS + WAKE_CAN_TRACE_WORDS) <= 32U);
+      resp_len = sizeof(wake_can_trace);
+      (void)memcpy(resp, (uint8_t*)(&wake_can_trace), resp_len);
       break;
     // **** 0xd6: get version
     case 0xd6:
