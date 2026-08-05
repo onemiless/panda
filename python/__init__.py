@@ -46,11 +46,27 @@ def calculate_checksum(data):
 def _parse_c_struct(path, name):
   type_to_format = {"uint8_t": "B", "uint16_t": "H", "uint32_t": "I", "float": "f"}
   with open(path) as f:
-    lines = [l.strip() for l in f.read().split(f"struct __attribute__((packed)) {name} {{", 1)[1].split("};", 1)[0].splitlines() if l.strip()]
+    source = f.read()
+  packed_start = f"struct __attribute__((packed)) {name} {{"
+  if packed_start in source:
+    body = source.split(packed_start, 1)[1].split("};", 1)[0]
+  else:
+    match = re.search(rf"typedef\s+struct\s*\{{([^}}]*)\}}\s*{re.escape(name)}\s*;", source, re.DOTALL)
+    if match is None:
+      raise ValueError(f"missing struct {name} in {path}")
+    body = match[1]
+  lines = [l.strip() for l in body.splitlines() if l.strip()]
   fields = [re.fullmatch(rf"({'|'.join(type_to_format)})\s+\w+;", l) for l in lines]
   if not all(fields):
     raise ValueError(f"unsupported {name} layout in {path}")
   return struct.Struct("<" + "".join(type_to_format[m[1]] for m in fields))
+
+def _parse_c_define(path, name):
+  with open(path) as f:
+    match = re.search(rf"^#define\s+{re.escape(name)}\s+(0x[0-9A-Fa-f]+|[0-9]+)[UuLl]*$", f.read(), re.MULTILINE)
+  if match is None:
+    raise ValueError(f"missing integer define {name} in {path}")
+  return int(match[1], 0)
 
 def pack_can_buffer(arr, chunk=False, fd=False):
   snds = [bytearray(), ]
@@ -139,9 +155,17 @@ class Panda:
   CAN_PACKET_VERSION = compute_version_hash(os.path.join(opendbc.INCLUDE_PATH, "opendbc/safety/can.h"))
   HEALTH_PACKET_VERSION = compute_version_hash(os.path.join(BASEDIR, "board/health.h"))
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
-  WAKE_DEBUG_STRUCT = struct.Struct("<14I8B")
-  WAKE_SUCCESS_STRUCT = struct.Struct("<10I")
-  WAKE_CAN_TRACE_STRUCT = struct.Struct("<II7HBB")
+  WAKE_PROTOCOL_HEADER = os.path.join(BASEDIR, "board/wake_protocol.h")
+  WAKE_MONITOR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ENABLE_WAKE_MONITOR")
+  WAKE_MONITOR_ARMED_STAGE = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_WAKE_MONITOR_ARMED_STAGE")
+  WAKE_DEBUG_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_DEBUG_MAGIC")
+  WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
+  WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
+  WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
+  WAKE_CAN_TRACE_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_CAN_TRACE")
+  WAKE_DEBUG_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_debug_t")
+  WAKE_SUCCESS_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_success_t")
+  WAKE_CAN_TRACE_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_can_trace_t")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -514,7 +538,7 @@ class Panda:
     self._handle.controlWrite(Panda.REQUEST_OUT, msg, 0, 0, b'')
 
   def enable_deepsleep(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'')
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_REQUEST, 0, 0, b'')
 
   # ******************* health *******************
 
@@ -554,7 +578,7 @@ class Panda:
     }
 
   def wake_debug(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd5, 0, 0, self.WAKE_DEBUG_STRUCT.size)
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_DEBUG_REQUEST, 0, 0, self.WAKE_DEBUG_STRUCT.size)
     a = self.WAKE_DEBUG_STRUCT.unpack(dat)
     return {
       "magic": a[0],
@@ -590,7 +614,7 @@ class Panda:
     }
 
   def wake_success(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd9, 0, 0, self.WAKE_SUCCESS_STRUCT.size)
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_SUCCESS_REQUEST, 0, 0, self.WAKE_SUCCESS_STRUCT.size)
     a = self.WAKE_SUCCESS_STRUCT.unpack(dat)
     return {
       "magic": a[0],
@@ -606,7 +630,7 @@ class Panda:
     }
 
   def wake_can_trace(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xda, 0, 0, self.WAKE_CAN_TRACE_STRUCT.size)
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_CAN_TRACE_REQUEST, 0, 0, self.WAKE_CAN_TRACE_STRUCT.size)
     a = self.WAKE_CAN_TRACE_STRUCT.unpack(dat)
     flags = (a[1] >> 16) & 0xFF
     peak_bus = (a[1] >> 24) & 0xFF
@@ -642,7 +666,7 @@ class Panda:
     }
 
   def clear_wake_success(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, 0xd7, 0, 0, b'')
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_SUCCESS_CLEAR_REQUEST, 0, 0, b'')
 
   @ensure_health_packet_version
   def can_health(self, can_number):
@@ -757,7 +781,7 @@ class Panda:
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xe7, int(power_save_enabled), 0, b'')
 
   def enter_stop_mode(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'', expect_disconnect=True)
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_REQUEST, 0, 0, b'', expect_disconnect=True)
 
   def schedule_bootkick_test(self, delay_s):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xb6, int(delay_s), 0, b'')

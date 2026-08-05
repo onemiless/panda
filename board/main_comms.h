@@ -1,3 +1,5 @@
+#include "board/wake_protocol.h"
+
 extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 
 // Prototypes
@@ -101,7 +103,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp_len = 2;
       break;
     // **** 0xb5: keep panda awake as a CAN wake monitor while SoM is down
-    case 0xb5:
+    case PANDA_REQUEST_ENABLE_WAKE_MONITOR:
       wake_monitor_enabled = true;
       wake_monitor_tesla_event_pending = false;
       wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
@@ -127,7 +129,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       set_power_save_state(false);
       current_board->set_bootkick(BOOT_STANDBY);
       stop_mode_requested = false;
-      wake_debug_stage(0x30U);
+      wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
       break;
     // **** 0xb6: schedule bootkick test after N seconds
     case 0xb6:
@@ -237,23 +239,23 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       }
       break;
     // **** 0xd5: get wake debug packet
-    case 0xd5:
+    case PANDA_REQUEST_GET_WAKE_DEBUG:
       COMPILE_TIME_ASSERT(sizeof(wake_debug_t) <= USBPACKET_MAX_SIZE);
       resp_len = sizeof(wake_debug);
       (void)memcpy(resp, (uint8_t*)(&wake_debug), resp_len);
       break;
     // **** 0xd7: clear latched offline wake success
-    case 0xd7:
+    case PANDA_REQUEST_CLEAR_WAKE_SUCCESS:
       wake_debug_clear_success();
       break;
     // **** 0xd9: get latched offline wake success
-    case 0xd9:
+    case PANDA_REQUEST_GET_WAKE_SUCCESS:
       COMPILE_TIME_ASSERT(sizeof(wake_success_t) <= USBPACKET_MAX_SIZE);
       resp_len = sizeof(wake_success);
       (void)memcpy(resp, (uint8_t*)(&wake_success), resp_len);
       break;
     // **** 0xda: get persistent CAN wake trace
-    case 0xda:
+    case PANDA_REQUEST_GET_WAKE_CAN_TRACE:
       COMPILE_TIME_ASSERT(sizeof(wake_can_trace_t) <= USBPACKET_MAX_SIZE);
       COMPILE_TIME_ASSERT((WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS + WAKE_CAN_TRACE_WORDS) <= 32U);
       resp_len = sizeof(wake_can_trace);
