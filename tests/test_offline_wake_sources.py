@@ -6,7 +6,7 @@ import subprocess
 PANDA_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_offline_wake_source_masks_include_sbu_and_oriented_bus1(tmp_path):
+def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
   source = tmp_path / "offline_wake_source_policy_test.c"
   executable = tmp_path / "offline_wake_source_policy_test"
   source.write_text(
@@ -16,10 +16,16 @@ def test_offline_wake_source_masks_include_sbu_and_oriented_bus1(tmp_path):
     #include "board/drivers/offline_wake_source_policy.h"
 
     int main(void) {
-      assert(offline_wake_can_exti_line(false) == (1UL << 5));
-      assert(offline_wake_can_exti_line(true) == (1UL << 12));
-      assert(offline_wake_exti_lines(false) == ((1UL << 1) | (1UL << 4) | (1UL << 5)));
-      assert(offline_wake_exti_lines(true) == ((1UL << 1) | (1UL << 4) | (1UL << 12)));
+      assert(offline_wake_oriented_fdcan2_exti_line(false) == (1UL << 5));
+      assert(offline_wake_oriented_fdcan2_exti_line(true) == (1UL << 12));
+      assert(offline_wake_tres_can_exti_lines(false) == ((1UL << 5) | (1UL << 8) | (1UL << 9)));
+      assert(offline_wake_tres_can_exti_lines(true) == ((1UL << 8) | (1UL << 9) | (1UL << 12)));
+      assert(offline_wake_tres_exti_lines(false) == ((1UL << 1) | (1UL << 4) | (1UL << 5) | (1UL << 8) | (1UL << 9)));
+      assert(offline_wake_tres_exti_lines(true) == ((1UL << 1) | (1UL << 4) | (1UL << 8) | (1UL << 9) | (1UL << 12)));
+      assert(offline_wake_cuatro_can_exti_lines(false) == ((1UL << 5) | (1UL << 8) | (1UL << 12)));
+      assert(offline_wake_cuatro_can_exti_lines(true) == ((1UL << 8) | (1UL << 12)));
+      assert(offline_wake_cuatro_exti_lines(false) == ((1UL << 1) | (1UL << 4) | (1UL << 5) | (1UL << 8) | (1UL << 12)));
+      assert(offline_wake_cuatro_exti_lines(true) == ((1UL << 1) | (1UL << 4) | (1UL << 8) | (1UL << 12)));
       return 0;
     }
     """

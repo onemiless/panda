@@ -538,7 +538,7 @@ int main(void) {
       if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) &&
           (normal_stop_allowed || strict_stop_allowed) && !wake_monitor_enabled && !bootkick_debug_active()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        enter_stop_mode(); // strict path wakes only on physical CAN bus 1 RX
+        enter_stop_mode(); // strict path wakes on armed physical CAN RX or SBU edges
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       // cppcheck-suppress misra-c2012-17.3 ; CMSIS __WFI macro expands to inline asm

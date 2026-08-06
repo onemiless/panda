@@ -89,15 +89,13 @@ static void enter_stop_mode(void) {
   // init GPIO to lowest power state
   current_board->set_bootkick(BOOT_STANDBY);
   current_board->set_amp_enabled(false);
-  // Strict offline wake: the capture evidence identifies logical CAN bus 1
-  // (FDCAN2) as the first physical wake source. Do not leave the other buses
-  // powered or armed, since STOP mode cannot inspect a CAN identifier before
-  // an RX edge wakes the MCU.
+  // STOP mode cannot decode a CAN identifier before the first RX edge. Keep
+  // every connected transceiver awake so activity on any physical vehicle bus
+  // can reach an armed RX EXTI input.
   const bool normal_harness = harness.status != HARNESS_STATUS_FLIPPED;
   for (uint8_t i = 1U; i <= 4U; i++) {
-    current_board->enable_can_transceiver(i, false);
+    current_board->enable_can_transceiver(i, true);
   }
-  current_board->enable_can_transceiver(normal_harness ? 2U : 4U, true);
   wake_debug_stage(0x13U);
 
   // disable ADCs
@@ -122,10 +120,15 @@ static void enter_stop_mode(void) {
   register_set(&(SYSCFG->EXTICR[0]), SYSCFG_EXTICR1_EXTI1_PA, 0xF0U);
   register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI4_PC, 0xFU);
 
-  // Logical bus 1 is FDCAN2. Its active RX is PB5 with a normal harness and
-  // PB12 with a flipped harness. Arm that CAN line plus both SBU lines.
-  const uint32_t can_exti_line = offline_wake_can_exti_line(!normal_harness);
-  const uint32_t wake_exti_lines = offline_wake_exti_lines(!normal_harness);
+  // Arm every physical CAN RX available on Tres: FDCAN1 PB8, oriented FDCAN2
+  // PB5/PB12, and FDCAN3 PG9. Cuatro uses PD12 for FDCAN3; in flipped mode it
+  // conflicts with FDCAN2 PB12, so the proven FDCAN2 wake source takes priority.
+  const bool tres = hw_type == HW_TYPE_TRES;
+  const uint32_t can_exti_lines = tres ? offline_wake_tres_can_exti_lines(!normal_harness) :
+                                         offline_wake_cuatro_can_exti_lines(!normal_harness);
+  const uint32_t wake_exti_lines = OFFLINE_WAKE_SBU_EXTI_LINES | can_exti_lines;
+  set_gpio_mode(GPIOB, 8, MODE_INPUT);
+  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
   if (normal_harness) {
     set_gpio_mode(GPIOB, 5, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
@@ -133,7 +136,14 @@ static void enter_stop_mode(void) {
     set_gpio_mode(GPIOB, 12, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
   }
-  wake_debug_can_exti(can_exti_line);
+  if (tres) {
+    set_gpio_mode(GPIOG, 9, MODE_INPUT);
+    register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
+  } else if (normal_harness) {
+    set_gpio_mode(GPIOD, 12, MODE_INPUT);
+    register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PD, 0xFU);
+  }
+  wake_debug_can_exti(can_exti_lines);
   register_set_bits(&(EXTI->IMR1), wake_exti_lines);
   register_set_bits(&(EXTI->EMR1), wake_exti_lines);
   register_set_bits(&(EXTI->RTSR1), wake_exti_lines);
@@ -172,11 +182,8 @@ static void enter_stop_mode(void) {
   // enable only wakeup EXTI interrupts
   NVIC_EnableIRQ(EXTI1_IRQn);  // SBU2 (PA1)
   NVIC_EnableIRQ(EXTI4_IRQn);  // SBU1 (PC4)
-  if (normal_harness) {
-    NVIC_EnableIRQ(EXTI9_5_IRQn);   // FDCAN2 RX PB5
-  } else {
-    NVIC_EnableIRQ(EXTI15_10_IRQn); // FDCAN2 RX PB12
-  }
+  NVIC_EnableIRQ(EXTI9_5_IRQn);    // FDCAN1 PB8, FDCAN2 PB5, Tres FDCAN3 PG9
+  NVIC_EnableIRQ(EXTI15_10_IRQn);  // FDCAN2 PB12 or Cuatro FDCAN3 PD12
 
   wake_debug_exti_snapshot(false);
   wake_debug_stage(0x16U);
