@@ -1,4 +1,5 @@
 #include "board/sys/sys.h"
+#include "board/drivers/offline_wake_source_policy.h"
 
 // WARNING: To stay in compliance with the SIL2 rules laid out in STM UM2331, we should never use any of the available hardware low power modes during safety function execution.
 // See rule: CoU_3
@@ -112,9 +113,19 @@ static void enter_stop_mode(void) {
   register_clear_bits(&(RCC->AHB4LPENR), RCC_AHB4LPENR_SRAM4LPEN);
   register_clear_bits(&(RCC->AHB3LPENR), RCC_AHB3LPENR_AXISRAMLPEN);
 
+  // Keep comma's two physical SBU wake inputs as a fallback for vehicle wake
+  // events that do not create a usable edge on the selected CAN RX pin.
+  set_gpio_mode(current_board->harness_config->GPIO_SBU1,
+                current_board->harness_config->pin_SBU1, MODE_INPUT);
+  set_gpio_mode(current_board->harness_config->GPIO_SBU2,
+                current_board->harness_config->pin_SBU2, MODE_INPUT);
+  register_set(&(SYSCFG->EXTICR[0]), SYSCFG_EXTICR1_EXTI1_PA, 0xF0U);
+  register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI4_PC, 0xFU);
+
   // Logical bus 1 is FDCAN2. Its active RX is PB5 with a normal harness and
-  // PB12 with a flipped harness. Arm exactly that EXTI line.
-  const uint32_t can_exti_line = normal_harness ? (1UL << 5) : (1UL << 12);
+  // PB12 with a flipped harness. Arm that CAN line plus both SBU lines.
+  const uint32_t can_exti_line = offline_wake_can_exti_line(!normal_harness);
+  const uint32_t wake_exti_lines = offline_wake_exti_lines(!normal_harness);
   if (normal_harness) {
     set_gpio_mode(GPIOB, 5, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
@@ -123,15 +134,15 @@ static void enter_stop_mode(void) {
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
   }
   wake_debug_can_exti(can_exti_line);
-  register_set_bits(&(EXTI->IMR1), can_exti_line);
-  register_set_bits(&(EXTI->EMR1), can_exti_line);
-  register_set_bits(&(EXTI->RTSR1), can_exti_line);
-  register_set_bits(&(EXTI->FTSR1), can_exti_line);
+  register_set_bits(&(EXTI->IMR1), wake_exti_lines);
+  register_set_bits(&(EXTI->EMR1), wake_exti_lines);
+  register_set_bits(&(EXTI->RTSR1), wake_exti_lines);
+  register_set_bits(&(EXTI->FTSR1), wake_exti_lines);
   wake_debug_exti_snapshot(false);
   wake_debug_stage(0x14U);
 
   // clear pending EXTI
-  EXTI->PR1 = can_exti_line;
+  EXTI->PR1 = wake_exti_lines;
 
   // reset if ignition just came on before going to sleep
   if (harness_check_ignition()) {
@@ -159,6 +170,8 @@ static void enter_stop_mode(void) {
     NVIC->ICPR[i] = 0xFFFFFFFFU;
   }
   // enable only wakeup EXTI interrupts
+  NVIC_EnableIRQ(EXTI1_IRQn);  // SBU2 (PA1)
+  NVIC_EnableIRQ(EXTI4_IRQn);  // SBU1 (PC4)
   if (normal_harness) {
     NVIC_EnableIRQ(EXTI9_5_IRQn);   // FDCAN2 RX PB5
   } else {
@@ -173,7 +186,7 @@ static void enter_stop_mode(void) {
   __WFI();
 
   wake_debug_exti_snapshot(true);
-  if ((EXTI->PR1 & can_exti_line) != 0U) {
+  if ((EXTI->PR1 & wake_exti_lines) != 0U) {
     // Persist a bootkick-recognised cause before the reset. The restored
     // state starts exactly one SoM wake pulse after Panda reinitializes.
     wake_debug_stage(0x34U);

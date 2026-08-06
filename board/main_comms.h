@@ -121,7 +121,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_tesla_front_door_closed_mask = 0U;
       wake_can_rate = false;
       wake_can_rate_cnt = 0U;
-      wake_debug_clear_success();
       wake_can_trace_reset();
       bootkick_cancel_wake_pulse();
       bootkick_clear_wake_confirmation();
