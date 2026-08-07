@@ -114,6 +114,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
 #define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
+#define WAKE_MONITOR_CAN_LED_HOLD_S 5U
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -127,6 +128,7 @@ static void tick_handler(void) {
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint8_t wake_monitor_can_activity_countdown = 0U;
+  static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
@@ -205,6 +207,7 @@ static void tick_handler(void) {
             wake_monitor_off_seconds = 0U;
             wake_monitor_som_off_seen = true;
             wake_monitor_can_activity_countdown = 0U;
+            wake_monitor_can_led_countdown = 0U;
             const offline_wake_heartbeat_loss_policy policy =
               offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES);
             if (policy.keep_can_active) {
@@ -277,14 +280,22 @@ static void tick_handler(void) {
       if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
         wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
         bool can_rate_jump = false;
+        bool can_activity_seen = false;
         for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
           const uint32_t baseline = wake_monitor_can_baseline[i];
           const uint32_t delta = (rx_per_bus[i] > baseline) ? (rx_per_bus[i] - baseline) : 0U;
           const uint32_t threshold = MAX(WAKE_MONITOR_CAN_RATE_DELTA, baseline >> 1U);
+          can_activity_seen |= rx_per_bus[i] > 0U;
           can_rate_jump |= delta >= threshold;
           if (delta < threshold) {
             wake_monitor_can_baseline[i] = baseline - (baseline >> 3U) + (rx_per_bus[i] >> 3U);
           }
+        }
+        if (can_activity_seen) {
+          wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;
+        } else if (wake_monitor_can_led_countdown > 0U) {
+          wake_monitor_can_led_countdown -= 1U;
+        } else {
         }
         wake_monitor_can_activity_countdown = can_rate_jump ? (wake_monitor_can_activity_countdown + 1U) : 0U;
         if (wake_monitor_can_activity_countdown >= WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S) {
@@ -358,6 +369,7 @@ static void tick_handler(void) {
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
         wake_monitor_can_activity_countdown = 0U;
+        wake_monitor_can_led_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
@@ -465,6 +477,13 @@ static void tick_handler(void) {
       // synchronous safety check
       safety_tick(&current_safety_config);
     }
+    if (wake_monitor_enabled && wake_monitor_som_off_seen) {
+      const bool wake_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
+                                  wake_monitor_reset_requested || bootkick_wake_confirmation_pending;
+      const bool can_activity_seen = (wake_monitor_can_led_countdown > 0U) || wake_monitor_tesla_event_pending;
+      led_set(LED_BLUE, offline_wake_blue_led_on(
+        wake_monitor_som_off_ready, can_activity_seen, wake_requested, loop_counter));
+    }
 
     loop_counter++;
     loop_counter %= 8U;
@@ -566,7 +585,6 @@ int main(void) {
         // wake the MCU from this shallow sleep; SAFETY_SILENT still blocks TX.
         led_set(LED_RED, false);
         led_set(LED_GREEN, false);
-        led_set(LED_BLUE, false);
         SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
         __DSB();
         __ISB();

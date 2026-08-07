@@ -25,6 +25,14 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(other_policy.request_power_save);
       assert(other_policy.request_strict_stop);
 
+      for (uint8_t phase = 0U; phase < 8U; phase++) {
+        assert(!offline_wake_blue_led_on(false, false, false, phase));
+        assert(offline_wake_blue_led_on(true, false, false, phase) == (phase < 4U));
+        assert(offline_wake_blue_led_on(true, true, false, phase) == ((phase & 1U) == 0U));
+        assert(offline_wake_blue_led_on(true, false, true, phase));
+        assert(offline_wake_blue_led_on(true, true, true, phase));
+      }
+
       assert(offline_wake_oriented_fdcan2_exti_line(false) == (1UL << 5));
       assert(offline_wake_oriented_fdcan2_exti_line(true) == (1UL << 12));
       assert(offline_wake_tres_can_exti_lines(false) == ((1UL << 5) | (1UL << 8) | (1UL << 9)));
@@ -70,6 +78,19 @@ def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   shallow_idle = source.split("if (wake_monitor_enabled && wake_monitor_som_off_seen) {", 1)[1].split("} else {", 1)[0]
   assert "SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;" in shallow_idle
   assert "__WFI();" in shallow_idle
+
+
+def test_offline_monitor_exposes_can_and_wake_state_on_blue_led():
+  source = (PANDA_ROOT / "board/main.c").read_text()
+
+  assert "WAKE_MONITOR_CAN_LED_HOLD_S" in source
+  assert "wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;" in source
+  assert "offline_wake_blue_led_on(" in source
+  assert "wake_monitor_can_wake_requested || wake_monitor_harness_requested" in source
+
+  main_loop = source.split("while (true) {", 1)[1]
+  shallow_idle = main_loop.split("if (wake_monitor_enabled && wake_monitor_som_off_seen) {", 1)[1].split("} else {", 1)[0]
+  assert "led_set(LED_BLUE, false);" not in shallow_idle
 
 
 def test_offline_monitor_does_not_buffer_stale_can_for_restarted_host():

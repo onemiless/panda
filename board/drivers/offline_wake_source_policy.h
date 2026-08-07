@@ -27,6 +27,24 @@ static inline offline_wake_heartbeat_loss_policy offline_wake_policy_after_heart
   return policy;
 }
 
+// Blue LED status while Tres keeps FDCAN alive with the SoM powered down:
+// off before the monitor is ready, 1 Hz when armed, 4 Hz after CAN activity,
+// and solid after a wake request has been dispatched.
+static inline bool offline_wake_blue_led_on(bool monitor_ready, bool can_activity_seen,
+                                            bool wake_requested, uint8_t tick_phase) {
+  bool led_on = false;
+  if (monitor_ready) {
+    if (wake_requested) {
+      led_on = true;
+    } else if (can_activity_seen) {
+      led_on = (tick_phase & 1U) == 0U;
+    } else {
+      led_on = tick_phase < 4U;
+    }
+  }
+  return led_on;
+}
+
 static inline uint32_t offline_wake_oriented_fdcan2_exti_line(bool flipped_harness) {
   return flipped_harness ? (1UL << 12) : (1UL << 5);
 }
