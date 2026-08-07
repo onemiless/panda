@@ -10,6 +10,7 @@ bool power_save_enabled = false;
 volatile bool wake_monitor_enabled = false;
 volatile bool wake_monitor_tesla_event_pending = false;
 volatile uint8_t wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+volatile bool wake_monitor_can_activity_pending = false;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_can_dispatch_pending = false;
 volatile uint32_t wake_monitor_can_dispatch_stage = 0U;

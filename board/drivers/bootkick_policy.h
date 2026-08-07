@@ -37,9 +37,19 @@ static inline bool bootkick_tres_early_reset_ready(bool is_tres, uint8_t wake_at
                                                    uint8_t retry_countdown, bool pulse_active,
                                                    uint8_t release_countdown, bool uart_seen,
                                                    bool som_powered, bool reset_attempted) {
+  (void)som_powered;
   return is_tres && (wake_attempts >= 1U) && (retry_countdown == 0U) &&
          !pulse_active && (release_countdown == 0U) && !uart_seen &&
-         !som_powered && !reset_attempted;
+         !reset_attempted;
+}
+
+static inline bool bootkick_can_activity_ready(bool monitor_enabled, bool som_off_ready, bool can_armed,
+                                               bool can_activity_pending, bool wake_requested) {
+  return monitor_enabled && som_off_ready && can_armed && can_activity_pending && !wake_requested;
+}
+
+static inline bool bootkick_heartbeat_confirms_wake(bool recent_heartbeat, bool confirmation_pending) {
+  return recent_heartbeat && confirmation_pending;
 }
 
 static inline bool bootkick_wake_request_needs_dispatch(bool monitor_enabled, bool som_off_ready,

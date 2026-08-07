@@ -56,6 +56,7 @@ extern uint32_t ignition_can_cnt;
 extern volatile bool wake_monitor_enabled;
 extern volatile bool wake_monitor_tesla_event_pending;
 extern volatile uint8_t wake_monitor_tesla_event_source;
+extern volatile bool wake_monitor_can_activity_pending;
 extern volatile bool wake_monitor_can_wake_requested;
 extern volatile bool wake_monitor_can_dispatch_pending;
 extern volatile uint32_t wake_monitor_can_dispatch_stage;
@@ -68,9 +69,6 @@ extern volatile int8_t wake_monitor_tesla_counter;
 extern volatile int8_t wake_monitor_tesla_door_counter;
 extern volatile uint8_t wake_monitor_tesla_front_door_known_mask;
 extern volatile uint8_t wake_monitor_tesla_front_door_closed_mask;
-extern bool wake_can_rate;
-extern uint32_t wake_can_rate_cnt;
-
 extern bool can_silent;
 extern bool can_loopback;
 

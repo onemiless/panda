@@ -112,8 +112,6 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
-#define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
-#define WAKE_MONITOR_CAN_RATE_DELTA 50U
 #define WAKE_MONITOR_CAN_LED_HOLD_S 5U
 
 // called at 8Hz
@@ -127,7 +125,6 @@ static void tick_handler(void) {
   static bool wake_monitor_harness_requested = false;
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint8_t wake_monitor_can_activity_countdown = 0U;
   static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
 
@@ -206,7 +203,7 @@ static void tick_handler(void) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
             wake_monitor_som_off_seen = true;
-            wake_monitor_can_activity_countdown = 0U;
+            wake_monitor_can_activity_pending = false;
             wake_monitor_can_led_countdown = 0U;
             const offline_wake_heartbeat_loss_policy policy =
               offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES);
@@ -250,7 +247,7 @@ static void tick_handler(void) {
           wake_monitor_som_off_seen = false;
           wake_monitor_som_off_countdown = 0U;
           wake_monitor_can_armed = false;
-          wake_monitor_can_activity_countdown = 0U;
+          wake_monitor_can_activity_pending = false;
         } else {
         }
       }
@@ -262,8 +259,9 @@ static void tick_handler(void) {
         wake_monitor_can_wake_requested = true;
         wake_monitor_tesla_event_pending = false;
         wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
-        wake_monitor_can_dispatch_pending = false;
-        wake_monitor_can_dispatch_stage = 0U;
+        wake_monitor_can_activity_pending = false;
+        wake_monitor_can_dispatch_pending = true;
+        wake_monitor_can_dispatch_stage = 0x34U;
         if (tesla_event_source == TESLA_WAKE_SOURCE_DOOR) {
           wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_DOOR);
         } else if (tesla_event_source == TESLA_WAKE_SOURCE_POWER) {
@@ -271,48 +269,29 @@ static void tick_handler(void) {
         } else {
         }
         wake_debug_stage(0x42U);
-        // Use the same simple delayed pulse path proven by the on-device
-        // bootkick self-test. The confirmation/retry path can remain stuck at
-        // its initial 0x34 stage while the SoM is down.
-        bootkick_debug_schedule(1U);
+        if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
+          wake_monitor_can_dispatch_pending = false;
+          wake_monitor_can_dispatch_stage = 0U;
+        }
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed && !wake_monitor_can_wake_requested) {
+      if (bootkick_can_activity_ready(
+            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+            wake_monitor_can_activity_pending, wake_monitor_can_wake_requested)) {
         wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
-        bool can_rate_jump = false;
-        bool can_activity_seen = false;
-        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-          const uint32_t baseline = wake_monitor_can_baseline[i];
-          const uint32_t delta = (rx_per_bus[i] > baseline) ? (rx_per_bus[i] - baseline) : 0U;
-          const uint32_t threshold = MAX(WAKE_MONITOR_CAN_RATE_DELTA, baseline >> 1U);
-          can_activity_seen |= rx_per_bus[i] > 0U;
-          can_rate_jump |= delta >= threshold;
-          if (delta < threshold) {
-            wake_monitor_can_baseline[i] = baseline - (baseline >> 3U) + (rx_per_bus[i] >> 3U);
-          }
+        wake_monitor_can_activity_pending = false;
+        wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;
+        wake_monitor_can_wake_requested = true;
+        wake_monitor_can_dispatch_pending = true;
+        wake_monitor_can_dispatch_stage = 0x35U;
+        wake_debug_stage(0x43U);
+        if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
+          wake_monitor_can_dispatch_pending = false;
+          wake_monitor_can_dispatch_stage = 0U;
         }
-        if (can_activity_seen) {
-          wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;
-        } else if (wake_monitor_can_led_countdown > 0U) {
-          wake_monitor_can_led_countdown -= 1U;
-        } else {
-        }
-        wake_monitor_can_activity_countdown = can_rate_jump ? (wake_monitor_can_activity_countdown + 1U) : 0U;
-        if (wake_monitor_can_activity_countdown >= WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S) {
-          wake_can_rate = true;
-          wake_can_rate_cnt = 0U;
-          wake_monitor_can_wake_requested = true;
-          wake_monitor_can_dispatch_pending = true;
-          wake_monitor_can_dispatch_stage = 0x35U;
-          wake_debug_stage(0x43U);
-          if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
-            wake_monitor_can_dispatch_pending = false;
-            wake_monitor_can_dispatch_stage = 0U;
-          }
-        }
-      } else if (!wake_monitor_enabled || (wake_can_rate && (wake_can_rate_cnt > 5U))) {
-        wake_can_rate = false;
-      } else {
+      }
+      if (wake_monitor_can_led_countdown > 0U) {
+        wake_monitor_can_led_countdown -= 1U;
       }
 
       // A Tesla wake frame can arrive on the FDCAN interrupt boundary while
@@ -353,7 +332,7 @@ static void tick_handler(void) {
           ((uint8_t)wake_monitor_som_off_ready * WAKE_CAN_TRACE_FLAG_SOM_OFF_READY) |
           ((uint8_t)wake_monitor_can_armed * WAKE_CAN_TRACE_FLAG_CAN_ARMED) |
           ((uint8_t)wake_monitor_can_wake_requested * WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED) |
-          ((uint8_t)(wake_monitor_can_activity_countdown > 0U) * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
+          ((uint8_t)wake_monitor_can_activity_pending * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
           ((uint8_t)ignition_can * WAKE_CAN_TRACE_FLAG_IGNITION_CAN) |
           ((uint8_t)harness_check_ignition() * WAKE_CAN_TRACE_FLAG_IGNITION_LINE);
         wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
@@ -368,13 +347,12 @@ static void tick_handler(void) {
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
-        wake_monitor_can_activity_countdown = 0U;
+        wake_monitor_can_activity_pending = false;
         wake_monitor_can_led_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
-        wake_can_rate = false;
         if (wake_was_requested) {
           wake_debug_latch_success(wake_debug.stage);
         }
@@ -382,7 +360,7 @@ static void tick_handler(void) {
       }
       const bool wake_activity = wake_monitor_enabled &&
                                  (wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
-                                  wake_monitor_reset_requested || wake_can_rate);
+                                  wake_monitor_reset_requested);
       bootkick_tick(started || wake_activity, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
@@ -472,7 +450,6 @@ static void tick_handler(void) {
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
-      wake_can_rate_cnt += 1U;
 
       // synchronous safety check
       safety_tick(&current_safety_config);
@@ -480,7 +457,8 @@ static void tick_handler(void) {
     if (wake_monitor_enabled && wake_monitor_som_off_seen) {
       const bool wake_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
                                   wake_monitor_reset_requested || bootkick_wake_confirmation_pending;
-      const bool can_activity_seen = (wake_monitor_can_led_countdown > 0U) || wake_monitor_tesla_event_pending;
+      const bool can_activity_seen = (wake_monitor_can_led_countdown > 0U) ||
+                                     wake_monitor_can_activity_pending || wake_monitor_tesla_event_pending;
       led_set(LED_BLUE, offline_wake_blue_led_on(
         wake_monitor_som_off_ready, can_activity_seen, wake_requested, loop_counter));
     }

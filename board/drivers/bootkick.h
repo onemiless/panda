@@ -26,7 +26,6 @@ volatile uint8_t bootkick_wake_som_off_countdown = 0U;
 #define BOOTKICK_WAKE_PULSE_S 30U
 #define BOOTKICK_WAKE_RELEASE_S 2U
 #define BOOTKICK_WAKE_RETRY_DELAY_S 15U
-#define BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S 30U
 #define BOOTKICK_WAKE_MAX_ATTEMPTS 3U
 #define BOOTKICK_WAKE_FINAL_GRACE_S 60U
 #define BOOTKICK_WAKE_POST_RESET_RELEASE_S 2U
@@ -141,8 +140,7 @@ bool bootkick_request_wake_pulse(uint32_t stage) {
   debug_bootkick_countdown = 0U;
   bootkick_wake_confirmation_pending = true;
   bootkick_wake_attempts = 1U;
-  bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ?
-                                    BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S : BOOTKICK_WAKE_RETRY_DELAY_S;
+  bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ? 0U : BOOTKICK_WAKE_RETRY_DELAY_S;
   bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
   bootkick_wake_uart_seen = false;
   bootkick_wake_reset_attempted = false;
@@ -177,8 +175,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     } else if (deferred_action == BOOTKICK_DEFERRED_START) {
       bootkick_wake_waiting_for_som_off = false;
       bootkick_wake_attempts = 1U;
-      bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ?
-                                      BOOTKICK_WAKE_TRES_RESPONSE_WAIT_S : BOOTKICK_WAKE_RETRY_DELAY_S;
+      bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ? 0U : BOOTKICK_WAKE_RETRY_DELAY_S;
       bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
       bootkick_wake_uart_seen = false;
       bootkick_wake_reset_attempted = false;
@@ -189,7 +186,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     } else {
     }
   } else if (recent_heartbeat) {
-    if (bootkick_wake_confirmation_pending && current_board->read_som_gpio()) {
+    if (bootkick_heartbeat_confirms_wake(recent_heartbeat, bootkick_wake_confirmation_pending)) {
       wake_debug_latch_success(bootkick_wake_trigger_stage);
       bootkick_clear_wake_confirmation();
     }
@@ -241,7 +238,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
       bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
     } else if (!tres_early_reset_ready &&
                !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
-               ((hw_type != HW_TYPE_TRES) || !som_powered) &&
+               (hw_type != HW_TYPE_TRES) &&
                !bootkick_wake_reset_attempted &&
                (bootkick_wake_attempts < BOOTKICK_WAKE_MAX_ATTEMPTS)) {
       if (bootkick_wake_retry_countdown > 0U) {
@@ -265,8 +262,9 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
         !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
         (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
         !bootkick_wake_reset_attempted && (hw_type == HW_TYPE_TRES)))) {
-    // Tres has no DC_IN control. If repeated BOOTKICK pulses produce no SoM
-    // UART activity, reset the powered-but-stalled SoM before holding BOOTKICK.
+    // Tres SOM GPIO can remain high after Linux has powered off. If a complete
+    // BOOTKICK pulse produces neither heartbeat nor UART, reset the SoM and
+    // generate a fresh edge after RESET is released.
     bootkick_wake_reset_attempted = true;
     boot_reset_countdown = 5U;
     bootkick_reset_triggered = true;

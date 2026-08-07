@@ -108,3 +108,14 @@ def test_tesla_wake_event_latches_only_after_shutdown_settle():
   assert "wake_monitor_enabled ? tesla_wake_source" in wake_latch
   assert "wake_monitor_som_off_ready &&" in wake_latch
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
+
+
+def test_single_can_frame_after_settle_requests_wake():
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
+
+  assert "wake_monitor_can_activity_pending = true;" in fdcan_source
+  assert "bootkick_can_activity_ready(" in main_source
+  assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" not in main_source
+  assert "WAKE_MONITOR_CAN_RATE_DELTA" not in main_source
+  assert "wake_monitor_can_wake_requested = true;" in main_source

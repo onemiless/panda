@@ -107,6 +107,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_enabled = true;
       wake_monitor_tesla_event_pending = false;
       wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+      wake_monitor_can_activity_pending = false;
       wake_monitor_can_wake_requested = false;
       wake_monitor_can_dispatch_pending = false;
       wake_monitor_can_dispatch_stage = 0U;
@@ -119,8 +120,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_tesla_door_counter = -1;
       wake_monitor_tesla_front_door_known_mask = 0U;
       wake_monitor_tesla_front_door_closed_mask = 0U;
-      wake_can_rate = false;
-      wake_can_rate_cnt = 0U;
       wake_can_trace_reset();
       bootkick_cancel_wake_pulse();
       bootkick_clear_wake_confirmation();

@@ -16,6 +16,9 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
 
     int main(void) {
       assert(bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, false, false));
+      // Tres SOM GPIO can remain high after Linux powers off. It must not
+      // block reset recovery after an unanswered full BOOTKICK pulse.
+      assert(bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, true, false));
 
       assert(!bootkick_tres_early_reset_ready(false, 1U, 0U, false, 0U, false, false, false));
       assert(!bootkick_tres_early_reset_ready(true, 0U, 0U, false, 0U, false, false, false));
@@ -23,8 +26,20 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, true, 0U, false, false, false));
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 1U, false, false, false));
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, true, false, false));
-      assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, true, false));
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, false, true));
+
+      // One valid CAN frame after the shutdown settle window is sufficient;
+      // hardwared already required every physical bus to be quiet for 300 s.
+      assert(bootkick_can_activity_ready(true, true, true, true, false));
+      assert(!bootkick_can_activity_ready(false, true, true, true, false));
+      assert(!bootkick_can_activity_ready(true, false, true, true, false));
+      assert(!bootkick_can_activity_ready(true, true, false, true, false));
+      assert(!bootkick_can_activity_ready(true, true, true, false, false));
+      assert(!bootkick_can_activity_ready(true, true, true, true, true));
+
+      assert(bootkick_heartbeat_confirms_wake(true, true));
+      assert(!bootkick_heartbeat_confirms_wake(false, true));
+      assert(!bootkick_heartbeat_confirms_wake(true, false));
 
       // A live pending dispatch is authoritative even if another diagnostic
       // stage was written between the CAN interrupt and the 1 Hz monitor.
@@ -132,3 +147,22 @@ def test_prestop_ignition_wake_waits_for_som_power_off(tmp_path):
     check=True,
   )
   subprocess.run([str(executable)], check=True)
+
+
+def test_tres_unanswered_wake_resets_then_generates_fresh_edge():
+  source = (PANDA_ROOT / "board/drivers/bootkick.h").read_text()
+
+  assert "#define BOOTKICK_WAKE_PULSE_S 30U" in source
+  assert "(hw_type == HW_TYPE_TRES) ? 0U : BOOTKICK_WAKE_RETRY_DELAY_S" in source
+
+  reset_recovery = source.split("if (bootkick_wake_confirmation_pending && !bootkick_wake_waiting_for_som_off", 2)[2]
+  reset_recovery = reset_recovery.split("if (bootkick_reset_pulse_requested", 1)[0]
+  assert "boot_reset_countdown = 5U;" in reset_recovery
+  assert "boot_state = BOOT_STANDBY;" in reset_recovery
+  assert "bootkick_wake_post_reset_countdown = BOOTKICK_WAKE_POST_RESET_RELEASE_S;" in reset_recovery
+  assert "bootkick_start_wake_pulse(0x41U);" in reset_recovery
+
+  heartbeat_path = source.split("} else if (recent_heartbeat) {", 1)[1].split("} else if", 1)[0]
+  assert "bootkick_heartbeat_confirms_wake" in heartbeat_path
+  assert "wake_debug_latch_success(bootkick_wake_trigger_stage);" in heartbeat_path
+  assert "bootkick_clear_wake_confirmation();" in heartbeat_path
