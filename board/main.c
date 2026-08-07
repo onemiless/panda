@@ -126,6 +126,7 @@ static void tick_handler(void) {
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint8_t wake_monitor_can_led_countdown = 0U;
+  static uint8_t wake_monitor_led_phase = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
@@ -460,7 +461,11 @@ static void tick_handler(void) {
       const bool can_activity_seen = (wake_monitor_can_led_countdown > 0U) ||
                                      wake_monitor_can_activity_pending || wake_monitor_tesla_event_pending;
       led_set(LED_BLUE, offline_wake_blue_led_on(
-        wake_monitor_som_off_ready, can_activity_seen, wake_requested, loop_counter));
+        wake_monitor_som_off_ready, can_activity_seen, wake_requested, wake_monitor_led_phase));
+      wake_monitor_led_phase++;
+      wake_monitor_led_phase %= 32U;
+    } else {
+      wake_monitor_led_phase = 0U;
     }
 
     loop_counter++;

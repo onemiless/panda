@@ -125,6 +125,10 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       bootkick_clear_wake_confirmation();
       set_safety_mode(SAFETY_SILENT, 0U);
       set_power_save_state(false);
+      // set_safety_mode reinitializes FDCAN, but power_save_enabled can
+      // already be false while individual transceiver enable pins retain a
+      // stale state. Reassert every physical receiver before the host exits.
+      enable_can_transceivers(true);
       current_board->set_bootkick(BOOT_STANDBY);
       #ifdef ALLOW_DEBUG
       stop_mode_requested = false;

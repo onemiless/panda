@@ -25,9 +25,9 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(other_policy.request_power_save);
       assert(other_policy.request_strict_stop);
 
-      for (uint8_t phase = 0U; phase < 8U; phase++) {
+      for (uint8_t phase = 0U; phase < 32U; phase++) {
         assert(!offline_wake_blue_led_on(false, false, false, phase));
-        assert(offline_wake_blue_led_on(true, false, false, phase) == (phase < 4U));
+        assert(offline_wake_blue_led_on(true, false, false, phase) == (phase == 0U));
         assert(offline_wake_blue_led_on(true, true, false, phase) == ((phase & 1U) == 0U));
         assert(offline_wake_blue_led_on(true, false, true, phase));
         assert(offline_wake_blue_led_on(true, true, true, phase));
@@ -60,6 +60,8 @@ def test_arming_wake_monitor_does_not_clear_latched_success():
   arm_case = source.split("case PANDA_REQUEST_ENABLE_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
   assert "wake_debug_clear_success();" not in arm_case
   assert arm_case.index("set_safety_mode(SAFETY_SILENT, 0U);") < arm_case.index("set_power_save_state(false);")
+  assert arm_case.index("set_power_save_state(false);") < arm_case.index("enable_can_transceivers(true);")
+  assert arm_case.index("enable_can_transceivers(true);") < arm_case.index("current_board->set_bootkick(BOOT_STANDBY);")
 
 
 def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
@@ -75,7 +77,7 @@ def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   assert "if (policy.keep_can_active)" in heartbeat_transition
   assert "WAKE_MONITOR_SOM_OFF_SETTLE_S" in heartbeat_transition
 
-  shallow_idle = source.split("if (wake_monitor_enabled && wake_monitor_som_off_seen) {", 1)[1].split("} else {", 1)[0]
+  shallow_idle = source.rsplit("if (wake_monitor_enabled && wake_monitor_som_off_seen) {", 1)[1].split("} else {", 1)[0]
   assert "SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;" in shallow_idle
   assert "__WFI();" in shallow_idle
 
@@ -86,6 +88,7 @@ def test_offline_monitor_exposes_can_and_wake_state_on_blue_led():
   assert "WAKE_MONITOR_CAN_LED_HOLD_S" in source
   assert "wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;" in source
   assert "offline_wake_blue_led_on(" in source
+  assert "wake_monitor_led_phase %= 32U;" in source
   assert "wake_monitor_can_wake_requested || wake_monitor_harness_requested" in source
 
   main_loop = source.split("while (true) {", 1)[1]
