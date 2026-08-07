@@ -279,8 +279,8 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    const uint8_t tesla_source = wake_monitor_enabled && wake_monitor_can_armed ? tesla_wake_source(&to_push, can_number) : TESLA_WAKE_SOURCE_NONE;
-    if (wake_monitor_som_off_ready && wake_monitor_can_armed && (tesla_source != TESLA_WAKE_SOURCE_NONE) && !wake_monitor_can_wake_requested) {
+    const uint8_t tesla_source = wake_monitor_enabled ? tesla_wake_source(&to_push, can_number) : TESLA_WAKE_SOURCE_NONE;
+    if (wake_monitor_som_off_ready && (tesla_source != TESLA_WAKE_SOURCE_NONE) && !wake_monitor_can_wake_requested) {
       // The CAN ISR only latches the event. The 1 Hz monitor owns all BOOTKICK
       // state and RTC stage changes so arming cannot overwrite a dispatched
       // wake request on an interrupt boundary.
@@ -294,8 +294,14 @@ void can_rx(uint8_t can_number) {
     }
     #endif
 
-    led_set(LED_BLUE, true);
-    rx_buffer_overflow += can_push(&can_rx_q, &to_push) ? 0U : 1U;
+    bool queue_for_host = true;
+    #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
+    queue_for_host = !wake_monitor_enabled || !wake_monitor_som_off_seen;
+    #endif
+    if (queue_for_host) {
+      led_set(LED_BLUE, true);
+      rx_buffer_overflow += can_push(&can_rx_q, &to_push) ? 0U : 1U;
+    }
 
     // Enable CAN FD and BRS if CAN FD message was received
     if (!(bus_config[can_number].canfd_enabled) && (canfd_frame)) {

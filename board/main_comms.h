@@ -127,7 +127,9 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       set_safety_mode(SAFETY_SILENT, 0U);
       set_power_save_state(false);
       current_board->set_bootkick(BOOT_STANDBY);
+      #ifdef ALLOW_DEBUG
       stop_mode_requested = false;
+      #endif
       wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
       break;
     // **** 0xb6: schedule bootkick test after N seconds

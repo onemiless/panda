@@ -111,6 +111,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
+#define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
 #define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
 
@@ -150,6 +151,7 @@ static void tick_handler(void) {
 
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {
+      const uint8_t old_harness_status = prev_harness_status;
       prev_harness_status = harness.status;
       can_set_orientation(harness.status == HARNESS_STATUS_FLIPPED);
 
@@ -158,6 +160,13 @@ static void tick_handler(void) {
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
 
+      if (wake_monitor_enabled && wake_monitor_som_off_ready &&
+          (old_harness_status == HARNESS_STATUS_NC) &&
+          (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
+        if (bootkick_request_wake_pulse(0x37U)) {
+          wake_monitor_harness_requested = true;
+        }
+      }
     }
 
     // decimated to 1Hz
@@ -185,24 +194,60 @@ static void tick_handler(void) {
         rx_per_bus[i] = can_health[i].total_rx_cnt - wake_monitor_prev_rx[i];
         wake_monitor_prev_rx[i] = can_health[i].total_rx_cnt;
       }
+      if (wake_monitor_enabled && recent_heartbeat && !wake_monitor_som_off_seen) {
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          wake_monitor_can_baseline[i] = rx_per_bus[i];
+        }
+      }
       if (wake_monitor_enabled) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
             wake_monitor_som_off_seen = true;
-            wake_monitor_som_off_ready = true;
-            wake_monitor_som_off_countdown = 0U;
-            wake_monitor_can_armed = true;
             wake_monitor_can_activity_countdown = 0U;
-            wake_can_trace_clear_peak();
-            wake_debug_stage(0x3FU);
-            // Bus 1 quiet was already proved while the SoM was alive. Once
-            // the shutdown heartbeat disappears, enter strict STOP without
-            // waiting again: the next bus-1 edge is the wake trigger.
-            wake_monitor_strict_stop_pending = true;
-            wake_monitor_enabled = false;
-            set_power_save_state(true);
+            const offline_wake_heartbeat_loss_policy policy =
+              offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES);
+            if (policy.keep_can_active) {
+              wake_monitor_som_off_ready = false;
+              wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
+              wake_monitor_can_armed = false;
+              // pandad is gone and can no longer drain this queue. Keep only
+              // counters/detectors while offline so the restarted host never
+              // fingerprints against stale pre-shutdown traffic.
+              can_clear(&can_rx_q);
+              // hardwared already proved every physical CAN bus quiet for
+              // 300 seconds. Freeze that pre-shutdown baseline so a real wake
+              // during the settle window cannot be learned away.
+              wake_debug_stage(0x39U);
+            } else {
+              wake_monitor_som_off_ready = true;
+              wake_monitor_som_off_countdown = 0U;
+              wake_monitor_can_armed = true;
+              wake_can_trace_clear_peak();
+              wake_debug_stage(0x3FU);
+              wake_monitor_strict_stop_pending = policy.request_strict_stop;
+              wake_monitor_enabled = false;
+              set_power_save_state(policy.request_power_save);
+            }
+          } else if (!wake_monitor_som_off_ready) {
+            if (wake_monitor_som_off_countdown > 0U) {
+              wake_monitor_som_off_countdown -= 1U;
+            }
+            if (wake_monitor_som_off_countdown == 0U) {
+              wake_monitor_som_off_ready = true;
+              wake_monitor_can_armed = true;
+              wake_can_trace_clear_peak();
+              wake_debug_stage(0x3FU);
+            }
+          } else {
           }
+        } else if (wake_monitor_som_off_seen && !wake_monitor_som_off_ready) {
+          // Ignore a short heartbeat gap while Linux is still alive. A real
+          // shutdown must restart the full settle sequence.
+          wake_monitor_som_off_seen = false;
+          wake_monitor_som_off_countdown = 0U;
+          wake_monitor_can_armed = false;
+          wake_monitor_can_activity_countdown = 0U;
         } else {
         }
       }
@@ -277,7 +322,11 @@ static void tick_handler(void) {
 
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
-      (void)wake_monitor_reset_requested;
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && started && !wake_monitor_reset_requested) {
+        if (bootkick_request_wake_pulse(0x32U)) {
+          wake_monitor_reset_requested = true;
+        }
+      }
       const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
       if (recent_heartbeat || !started) {
         wake_monitor_reset_requested = false;
@@ -300,6 +349,7 @@ static void tick_handler(void) {
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
+        can_clear(&can_rx_q);
         wake_monitor_enabled = false;
         wake_monitor_tesla_event_pending = false;
         wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
@@ -318,7 +368,10 @@ static void tick_handler(void) {
         }
         wake_debug_stage(0x38U);
       }
-      bootkick_tick(!wake_monitor_enabled && started, recent_heartbeat);
+      const bool wake_activity = wake_monitor_enabled &&
+                                 (wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
+                                  wake_monitor_reset_requested || wake_can_rate);
+      bootkick_tick(started || wake_activity, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {
@@ -390,7 +443,8 @@ static void tick_handler(void) {
 
           // Run fan when device is up but not talking to us.
           // The bootloader enables the SOM GPIO on boot.
-          fan_set_power(current_board->read_som_gpio() ? 30U : 0U);
+          const bool offline_monitoring = wake_monitor_enabled && wake_monitor_som_off_ready;
+          fan_set_power(!offline_monitoring && current_board->read_som_gpio() ? 30U : 0U);
         }
       }
 
@@ -506,39 +560,53 @@ int main(void) {
     }
     #endif
     if (!power_save_enabled) {
-      #ifdef DEBUG_FAULTS
-      if (fault_status == FAULT_STATUS_NONE) {
-      #endif
-        // useful for debugging, fade breaks = panda is overloaded
-        for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
-          led_set(LED_RED, true);
-          delay(fade >> 4);
-          led_set(LED_RED, false);
-          delay((MAX_LED_FADE - fade) >> 4);
-        }
-
-        for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
-          led_set(LED_RED, true);
-          delay(fade >> 4);
-          led_set(LED_RED, false);
-          delay((MAX_LED_FADE - fade) >> 4);
-        }
-
-      #ifdef DEBUG_FAULTS
+      if (wake_monitor_enabled && wake_monitor_som_off_seen) {
+        // Keep FDCAN and the normal interrupt controller running, but stop the
+        // LED fade busy-loop while the SoM is powered off. Tick/CAN interrupts
+        // wake the MCU from this shallow sleep; SAFETY_SILENT still blocks TX.
+        led_set(LED_RED, false);
+        led_set(LED_GREEN, false);
+        led_set(LED_BLUE, false);
+        SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+        __DSB();
+        __ISB();
+        // cppcheck-suppress misra-c2012-17.3 ; CMSIS __WFI macro expands to inline asm
+        __WFI();
       } else {
+        #ifdef DEBUG_FAULTS
+        if (fault_status == FAULT_STATUS_NONE) {
+        #endif
+          // useful for debugging, fade breaks = panda is overloaded
+          for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
+            led_set(LED_RED, true);
+            delay(fade >> 4);
+            led_set(LED_RED, false);
+            delay((MAX_LED_FADE - fade) >> 4);
+          }
+
+          for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
+            led_set(LED_RED, true);
+            delay(fade >> 4);
+            led_set(LED_RED, false);
+            delay((MAX_LED_FADE - fade) >> 4);
+          }
+
+        #ifdef DEBUG_FAULTS
+        } else {
           led_set(LED_RED, 1);
           delay(512000U);
           led_set(LED_RED, 0);
           delay(512000U);
         }
-      #endif
+        #endif
+      }
     } else {
       const bool normal_stop_allowed = !current_board->read_som_gpio();
       const bool strict_stop_allowed = wake_monitor_strict_stop_pending;
       if (((hw_type == HW_TYPE_TRES) || (hw_type == HW_TYPE_CUATRO)) &&
           (normal_stop_allowed || strict_stop_allowed) && !wake_monitor_enabled && !bootkick_debug_active()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
-        enter_stop_mode(); // strict path wakes on armed physical CAN RX or SBU edges
+        enter_stop_mode();
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       // cppcheck-suppress misra-c2012-17.3 ; CMSIS __WFI macro expands to inline asm

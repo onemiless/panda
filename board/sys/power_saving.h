@@ -17,9 +17,6 @@ volatile bool wake_monitor_som_off_seen = false;
 volatile bool wake_monitor_som_off_ready = false;
 volatile uint8_t wake_monitor_som_off_countdown = 0U;
 volatile bool wake_monitor_can_armed = false;
-// The strict Tesla path has completed its quiet interval and must enter STOP.
-// This is deliberately independent of the SoM GPIO: on Tres that GPIO can
-// remain high after Linux has powered down.
 volatile bool wake_monitor_strict_stop_pending = false;
 volatile int8_t wake_monitor_tesla_counter = -1;
 volatile int8_t wake_monitor_tesla_door_counter = -1;
