@@ -71,6 +71,16 @@ static inline bool tesla_wake_counter_valid(int8_t previous_counter, int8_t coun
   return (previous_counter >= 0) && (counter == ((previous_counter + 1) % 16));
 }
 
+static inline bool tesla_power_state_wake_ready(uint8_t logical_bus, uint8_t len,
+                                                int8_t previous_counter, int8_t counter,
+                                                uint8_t power_state) {
+  // Match Tesla's ignition definition: only DRIVE is an ignition-quality
+  // wake source. PARK/ACCESSORY traffic continues while the car sleeps and
+  // otherwise causes an immediate shutdown/wake loop.
+  return (logical_bus == 0U) && (len == 8U) &&
+         tesla_wake_counter_valid(previous_counter, counter) && (power_state == 3U);
+}
+
 static inline int8_t tesla_ui_warning_counter(const uint8_t *data) {
   return (int8_t)(data[1] & 0xFU);
 }

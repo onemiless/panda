@@ -17,9 +17,7 @@ static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
     if (msg->bus == 0U) {
       wake_monitor_tesla_counter = counter;
     }
-    // Any non-off Tesla power state indicates vehicle activity worth waking
-    // the SoM for, including scheduled or user-requested conditioning.
-    if ((msg->bus == 0U) && valid_counter && (power_state != 0U)) {
+    if (tesla_power_state_wake_ready(msg->bus, GET_LEN(msg), previous_counter, counter, power_state)) {
       source = TESLA_WAKE_SOURCE_POWER;
     }
   } else if ((msg->addr == 0x311U) && (GET_LEN(msg) == 7)) {

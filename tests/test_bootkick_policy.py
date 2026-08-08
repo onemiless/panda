@@ -74,6 +74,15 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!tesla_wake_counter_valid(-1, 0));
       assert(!tesla_wake_counter_valid(1, 1));
       assert(!tesla_wake_counter_valid(1, 3));
+      // Sleeping/standby power states (0-2) must never wake the SoM. Only
+      // Tesla's documented DRIVE state is an ignition-quality wake source.
+      assert(!tesla_power_state_wake_ready(0U, 8U, 0, 1, 0U));
+      assert(!tesla_power_state_wake_ready(0U, 8U, 0, 1, 1U));
+      assert(!tesla_power_state_wake_ready(0U, 8U, 0, 1, 2U));
+      assert(tesla_power_state_wake_ready(0U, 8U, 0, 1, 3U));
+      assert(!tesla_power_state_wake_ready(1U, 8U, 0, 1, 3U));
+      assert(!tesla_power_state_wake_ready(0U, 7U, 0, 1, 3U));
+      assert(!tesla_power_state_wake_ready(0U, 8U, 0, 2, 3U));
       const uint8_t closed_frame[7] = {0U, 4U, 0U, 0U, 0U, 0U, 0U};
       const uint8_t open_frame[7] = {0U, 5U, 0U, 0x10U, 0U, 0U, 0U};
       assert(tesla_ui_warning_counter(open_frame) == 5);
