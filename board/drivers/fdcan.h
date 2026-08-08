@@ -1,58 +1,19 @@
 #include "board/drivers/drivers.h"
-#include "board/drivers/bootkick_policy.h"
+#include "board/drivers/tesla_offline_wake.h"
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
+static tesla_offline_wake_state_t tesla_wake_state = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
+
 static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
-  uint8_t source = TESLA_WAKE_SOURCE_NONE;
-  if ((msg->addr == 0x221U) && (GET_LEN(msg) == 8)) {
-    const int8_t counter = (int8_t)(msg->data[6] >> 4U);
-    const int8_t previous_counter = (msg->bus == 0U) ? wake_monitor_tesla_counter : -1;
-    const bool valid_counter = tesla_wake_counter_valid(previous_counter, counter);
-    const uint8_t power_state = (msg->data[0] >> 5U) & 0x3U;
-    if (wake_monitor_enabled && wake_monitor_som_off_ready) {
-      wake_can_trace_tesla(physical_bus, msg->bus, power_state, previous_counter, (uint8_t)counter, valid_counter);
-    }
-    if (msg->bus == 0U) {
-      wake_monitor_tesla_counter = counter;
-    }
-    if (tesla_power_state_wake_ready(msg->bus, GET_LEN(msg), previous_counter, counter, power_state)) {
-      source = TESLA_WAKE_SOURCE_POWER;
-    }
-  } else if ((msg->addr == 0x311U) && (GET_LEN(msg) == 7)) {
-    const int8_t counter = tesla_ui_warning_counter(msg->data);
-    const int8_t previous_counter = (msg->bus == 0U) ? wake_monitor_tesla_door_counter : -1;
-    const bool door_open = tesla_ui_warning_door_open(msg->data);
-    if (msg->bus == 0U) {
-      wake_monitor_tesla_door_counter = counter;
-    }
-    // Opening a door wakes the Tesla Party bus before VCFRONT necessarily
-    // announces a non-off LV power state. Two sequential counters reject a
-    // stale or corrupt frame while still reacting within one message period.
-    if (tesla_door_wake_ready(msg->bus, GET_LEN(msg), previous_counter, counter, door_open)) {
-      source = TESLA_WAKE_SOURCE_DOOR;
-    }
-  } else if (((msg->addr == 0x102U) || (msg->addr == 0x103U)) && (GET_LEN(msg) == 8)) {
-    // Some vehicles don't publish UI_warning until after the low-voltage
-    // power-state transition. Track the direct left/right front-door latch
-    // messages so opening either front door can wake Tres immediately.
-    const uint8_t door_mask = (msg->addr == 0x102U) ? 0x1U : 0x2U;
-    const bool previous_known = (wake_monitor_tesla_front_door_known_mask & door_mask) != 0U;
-    const bool previous_closed = (wake_monitor_tesla_front_door_closed_mask & door_mask) != 0U;
-    if (tesla_door_latch_wake_ready(msg->bus, GET_LEN(msg), previous_known, previous_closed, msg->data)) {
-      source = TESLA_WAKE_SOURCE_DOOR;
-    }
-    if (msg->bus == 0U) {
-      wake_monitor_tesla_front_door_known_mask |= door_mask;
-      if (tesla_front_door_latch_closed(msg->data)) {
-        wake_monitor_tesla_front_door_closed_mask |= door_mask;
-      } else {
-        wake_monitor_tesla_front_door_closed_mask &= (uint8_t)(~door_mask);
-      }
-    }
+  const tesla_offline_wake_result_t result = tesla_offline_wake_step(
+    &tesla_wake_state, msg->addr, msg->bus, GET_LEN(msg), msg->data);
+  if (wake_monitor_enabled && wake_monitor_som_off_seen && result.power_frame) {
+    wake_can_trace_tesla(physical_bus, msg->bus, result.power_state, result.previous_counter,
+                         (uint8_t)result.counter, result.counter_valid && result.checksum_valid);
   }
-  return source;
+  return result.source;
 }
 #endif
 
@@ -277,8 +238,18 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    const uint8_t tesla_source = wake_monitor_enabled ? tesla_wake_source(&to_push, can_number) : TESLA_WAKE_SOURCE_NONE;
-    if (wake_monitor_som_off_ready && (tesla_source != TESLA_WAKE_SOURCE_NONE) && !wake_monitor_can_wake_requested) {
+    // Always learn the current Tesla door/counter state while the host is
+    // alive. Only latch a wake after heartbeat loss, including the 10 second
+    // shutdown settle window; the 1 Hz owner defers dispatch until armed.
+    const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
+    if (bootkick_tesla_event_should_latch(
+          wake_monitor_enabled, wake_monitor_som_off_seen,
+          tesla_source != TESLA_WAKE_SOURCE_NONE, wake_monitor_can_wake_requested)) {
+      const uint8_t journal_source = (tesla_source == TESLA_WAKE_SOURCE_DOOR) ?
+                                       WAKE_JOURNAL_SOURCE_TESLA_DOOR :
+                                       WAKE_JOURNAL_SOURCE_TESLA_POWER;
+      wake_journal_queue_event(journal_source, 0x34U, to_push.bus, can_number,
+                               GET_LEN(&to_push), to_push.addr, to_push.data);
       // The CAN ISR only latches the event. The 1 Hz monitor owns all BOOTKICK
       // state and RTC stage changes so arming cannot overwrite a dispatched
       // wake request on an interrupt boundary.

@@ -49,10 +49,6 @@ extern can_health_t can_health[PANDA_CAN_CNT];
 extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
 
-#define TESLA_WAKE_SOURCE_NONE 0U
-#define TESLA_WAKE_SOURCE_POWER 1U
-#define TESLA_WAKE_SOURCE_DOOR 2U
-
 extern volatile bool wake_monitor_enabled;
 extern volatile bool wake_monitor_tesla_event_pending;
 extern volatile uint8_t wake_monitor_tesla_event_source;
@@ -65,10 +61,6 @@ extern volatile bool wake_monitor_som_off_ready;
 extern volatile uint8_t wake_monitor_som_off_countdown;
 extern volatile bool wake_monitor_can_armed;
 extern volatile bool wake_monitor_strict_stop_pending;
-extern volatile int8_t wake_monitor_tesla_counter;
-extern volatile int8_t wake_monitor_tesla_door_counter;
-extern volatile uint8_t wake_monitor_tesla_front_door_known_mask;
-extern volatile uint8_t wake_monitor_tesla_front_door_closed_mask;
 extern bool can_silent;
 extern bool can_loopback;
 

@@ -119,11 +119,10 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       wake_monitor_som_off_countdown = 0U;
       wake_monitor_can_armed = false;
       wake_monitor_strict_stop_pending = false;
-      wake_monitor_tesla_counter = -1;
-      wake_monitor_tesla_door_counter = -1;
-      wake_monitor_tesla_front_door_known_mask = 0U;
-      wake_monitor_tesla_front_door_closed_mask = 0U;
+      // Keep the door/counter state learned from live traffic. Resetting it at
+      // shutdown loses the closed state needed to recognise a real open edge.
       wake_can_trace_reset();
+      wake_journal_begin_cycle();
       bootkick_cancel_wake_pulse();
       bootkick_clear_wake_confirmation();
       set_safety_mode(SAFETY_SILENT, 0U);
@@ -268,6 +267,24 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp_len = sizeof(wake_can_trace);
       (void)memcpy(resp, (uint8_t*)(&wake_can_trace), resp_len);
       break;
+    // **** 0xe9: get append-only wake journal state
+    case PANDA_REQUEST_GET_WAKE_JOURNAL_INFO: {
+      const wake_journal_info_t info = wake_journal_get_info();
+      COMPILE_TIME_ASSERT(sizeof(wake_journal_info_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(info);
+      (void)memcpy(resp, (const uint8_t *)&info, resp_len);
+      break;
+    }
+    // **** 0xea: read one raw 32-byte wake journal slot
+    case PANDA_REQUEST_GET_WAKE_JOURNAL_RECORD: {
+      wake_journal_record_t record;
+      COMPILE_TIME_ASSERT(sizeof(wake_journal_record_t) <= USBPACKET_MAX_SIZE);
+      if (wake_journal_get_record(req->param1, &record)) {
+        resp_len = sizeof(record);
+        (void)memcpy(resp, (const uint8_t *)&record, resp_len);
+      }
+      break;
+    }
     // **** 0xd6: get version
     case 0xd6:
       COMPILE_TIME_ASSERT(sizeof(gitversion) <= USBPACKET_MAX_SIZE);

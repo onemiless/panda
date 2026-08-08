@@ -7,9 +7,14 @@ void flash_unlock(void) {
   FLASH->KEYR1 = 0xCDEF89AB;
 }
 
+void flash_lock(void) {
+  FLASH->CR1 |= FLASH_CR_LOCK;
+}
+
 bool flash_erase_sector(uint8_t sector, bool unlocked) {
-  // don't erase the bootloader(sector 0)
-  if (sector != 0 && sector < 8 && unlocked) {
+  // Never erase the bootstub (sector 0) or provisioning (sector 7). Sector 6
+  // is reserved for the wake journal and requires its own address checks.
+  if (flash_sector_erase_allowed(sector) && unlocked) {
     FLASH->CR1 = (sector << 8) | FLASH_CR_SER;
     FLASH->CR1 |= FLASH_CR_START;
     while (FLASH->SR1 & FLASH_SR_QW);

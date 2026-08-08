@@ -163,9 +163,15 @@ class Panda:
   WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
   WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
   WAKE_CAN_TRACE_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_CAN_TRACE")
+  WAKE_JOURNAL_INFO_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_JOURNAL_INFO")
+  WAKE_JOURNAL_RECORD_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_JOURNAL_RECORD")
+  WAKE_JOURNAL_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_JOURNAL_MAGIC")
+  WAKE_JOURNAL_VERSION = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_JOURNAL_VERSION")
   WAKE_DEBUG_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_debug_t")
   WAKE_SUCCESS_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_success_t")
   WAKE_CAN_TRACE_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_can_trace_t")
+  WAKE_JOURNAL_INFO_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_info_t")
+  WAKE_JOURNAL_RECORD_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_record_t")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -429,10 +435,12 @@ class Panda:
     assert Panda.flasher_present(handle)
 
     # determine sectors to erase
-    apps_sectors_cumsum = accumulate(mcu_type.config.sector_sizes[1:])
-    last_sector = next((i + 1 for i, v in enumerate(apps_sectors_cumsum) if v > len(code)), -1)
-    assert last_sector >= 1, "Binary too small? No sector to erase."
-    assert last_sector < 7, "Binary too large! Risk of overwriting provisioning chunk."
+    app_capacity = mcu_type.config.app_end_address - mcu_type.config.app_address
+    assert 0 < len(code) <= app_capacity, "Binary too large! Risk of overwriting reserved flash."
+    app_sector_sizes = mcu_type.config.sector_sizes[1:mcu_type.config.app_last_sector + 1]
+    apps_sectors_cumsum = accumulate(app_sector_sizes)
+    last_sector = next((i + 1 for i, v in enumerate(apps_sectors_cumsum) if v >= len(code)), -1)
+    assert 1 <= last_sector <= mcu_type.config.app_last_sector, "No writable application sector for binary."
 
     # unlock flash
     logger.info("flash: unlocking")
@@ -665,6 +673,77 @@ class Panda:
       "tesla_previous_counter": (a[10] >> 4) & 0xF if tesla_seen else None,
       "tesla_counter": a[10] & 0xF if tesla_seen else None,
     }
+
+  def wake_journal_info(self, timeout: int = 15000):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_JOURNAL_INFO_REQUEST, 0, 0,
+                                   self.WAKE_JOURNAL_INFO_STRUCT.size, timeout=timeout)
+    a = self.WAKE_JOURNAL_INFO_STRUCT.unpack(dat)
+    return {
+      "magic": a[0],
+      "version": a[1],
+      "record_size": a[2],
+      "capacity": a[3],
+      "used_slots": a[4],
+      "valid_records": a[5],
+      "full": bool(a[6] & 0x1),
+      "foreign_data": bool(a[6] & 0x2),
+      "next_sequence": a[7],
+      "current_cycle": a[8],
+    }
+
+  def wake_journal_record(self, slot: int, timeout: int = 15000):
+    if not 0 <= slot <= 0xFFFF:
+      raise ValueError(f"invalid wake journal slot {slot}")
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_JOURNAL_RECORD_REQUEST,
+                                   slot, 0, self.WAKE_JOURNAL_RECORD_STRUCT.size, timeout=timeout)
+    a = self.WAKE_JOURNAL_RECORD_STRUCT.unpack(dat)
+    meta = a[3]
+    version = meta & 0xFF
+    record_type = (meta >> 8) & 0xF
+    source_id = (meta >> 12) & 0xF
+    auxiliary = (meta >> 16) & 0xFFFF
+    source = {
+      1: "teslaDoor",
+      2: "teslaPower",
+      3: "canRate",
+      4: "ignition",
+      5: "harness",
+    }.get(source_id, "unknown")
+    valid = a[0] == self.WAKE_JOURNAL_MAGIC and version == self.WAKE_JOURNAL_VERSION \
+      and (binascii.crc32(dat[:28]) & 0xFFFFFFFF) == a[7]
+    record = {
+      "valid": valid,
+      "magic": a[0],
+      "version": version,
+      "type": {1: "event", 2: "result"}.get(record_type, "unknown"),
+      "source": source,
+      "sequence": a[1],
+      "cycle": a[2],
+    }
+    if record_type == 1:
+      length = (auxiliary >> 4) & 0xF
+      payload = struct.pack("<II", a[5], a[6])[:min(length, 8)]
+      record.update({
+        "trigger_stage": (auxiliary >> 8) & 0xFF,
+        "logical_bus": auxiliary & 0x3,
+        "physical_bus": (auxiliary >> 2) & 0x3,
+        "length": length,
+        "can_id": a[4],
+        "data": payload.hex(),
+      })
+    elif record_type == 2:
+      record.update({
+        "success": bool(auxiliary & (1 << 6)),
+        "attempts": auxiliary & 0x3,
+        "uart_seen": bool(auxiliary & (1 << 2)),
+        "reset_attempted": bool(auxiliary & (1 << 3)),
+        "som_gpio": bool(auxiliary & (1 << 4)),
+        "heartbeat_seen": bool(auxiliary & (1 << 5)),
+        "trigger_stage": a[4],
+        "final_stage": a[5],
+        "reset_reason": a[6],
+      })
+    return record
 
   def clear_wake_success(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_SUCCESS_CLEAR_REQUEST, 0, 0, b'')

@@ -8,11 +8,27 @@
 #define PANDA_REQUEST_CLEAR_WAKE_SUCCESS 0xD7U
 #define PANDA_REQUEST_GET_WAKE_SUCCESS 0xD9U
 #define PANDA_REQUEST_GET_WAKE_CAN_TRACE 0xDAU
+#define PANDA_REQUEST_GET_WAKE_JOURNAL_INFO 0xE9U
+#define PANDA_REQUEST_GET_WAKE_JOURNAL_RECORD 0xEAU
 
 #define PANDA_WAKE_MONITOR_ARMED_STAGE 0x30U
 #define WAKE_DEBUG_MAGIC 0x57414B48U
 #define WAKE_SUCCESS_MAGIC 0x57535543U
 #define WAKE_CAN_TRACE_MAGIC 0x57435452U
+#define WAKE_JOURNAL_MAGIC 0x574A524EU
+#define WAKE_JOURNAL_VERSION 1U
+#define WAKE_JOURNAL_RECORD_SIZE 32U
+
+#define WAKE_JOURNAL_RECORD_EVENT 1U
+#define WAKE_JOURNAL_RECORD_RESULT 2U
+#define WAKE_JOURNAL_SOURCE_TESLA_DOOR 1U
+#define WAKE_JOURNAL_SOURCE_TESLA_POWER 2U
+#define WAKE_JOURNAL_SOURCE_CAN_RATE 3U
+#define WAKE_JOURNAL_SOURCE_IGNITION 4U
+#define WAKE_JOURNAL_SOURCE_HARNESS 5U
+
+#define WAKE_JOURNAL_FLAG_FULL (1U << 0U)
+#define WAKE_JOURNAL_FLAG_FOREIGN_DATA (1U << 1U)
 
 typedef struct {
   uint32_t magic;
@@ -68,3 +84,28 @@ typedef struct {
   uint8_t tesla_meta;
   uint8_t tesla_counters;
 } wake_can_trace_t;
+
+typedef struct {
+  uint32_t magic;
+  uint32_t sequence;
+  uint32_t cycle;
+  uint32_t meta;
+  uint32_t value0;
+  uint32_t value1;
+  uint32_t value2;
+  uint32_t crc32;
+} wake_journal_record_t;
+
+typedef struct {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t record_size;
+  uint16_t capacity;
+  uint16_t used_slots;
+  uint16_t valid_records;
+  uint16_t flags;
+  uint32_t next_sequence;
+  uint32_t current_cycle;
+  uint32_t reserved0;
+  uint32_t reserved1;
+} wake_journal_info_t;

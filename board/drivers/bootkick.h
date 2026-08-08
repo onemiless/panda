@@ -346,6 +346,9 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
     } else {
       bootkick_wake_final_countdown -= 1U;
       if (bootkick_wake_final_countdown == 0U) {
+        wake_journal_queue_result(false, bootkick_wake_attempts, bootkick_wake_uart_seen,
+                                  bootkick_wake_reset_attempted, current_board->read_som_gpio(),
+                                  false, bootkick_wake_trigger_stage, 0x3EU, wake_debug.reset_reason);
         wake_debug_stage(0x3EU);
         bootkick_clear_wake_confirmation();
       }

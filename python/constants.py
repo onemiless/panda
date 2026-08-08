@@ -22,6 +22,8 @@ class McuConfig(NamedTuple):
   block_size: int
   serial_number_address: int
   app_address: int
+  app_end_address: int
+  app_last_sector: int
   app_fn: str
   bootstub_address: int
   bootstub_fn: str
@@ -40,6 +42,8 @@ F4Config = McuConfig(
   0x800,
   0x1FFF79C0,
   0x8004000,
+  0x8060000,
+  6,
   "panda.bin.signed",
   0x8000000,
   "bootstub.panda.bin",
@@ -53,9 +57,11 @@ H7Config = McuConfig(
   8,
   0x1FF1E800,
   0x400,
-  # there is an 8th sector, but we use that for the provisioning chunk, so don't program over that!
+  # Sector 6 is the offline wake journal and sector 7 contains provisioning.
   0x080FFFC0,
   0x8020000,
+  0x80C0000,
+  5,
   "panda_h7.bin.signed",
   0x8000000,
   "bootstub.panda_h7.bin",

@@ -1,5 +1,6 @@
 #include "stm32h7xx.h"
 #include "stm32h7xx_hal_gpio_ex.h"
+#include "board/stm32h7/flash_layout.h"
 #define MCU_IDCODE 0x483U
 
 #define CORE_FREQ 240U // in Mhz
@@ -42,6 +43,15 @@ separate IRQs for RX and TX.
 
 #define PROVISION_CHUNK_ADDRESS 0x080FFFE0U
 #define DEVICE_SERIAL_NUMBER_ADDRESS 0x080FFFC0U
+
+_Static_assert((APP_START_ADDRESS % FLASH_SECTOR_SIZE) == 0U, "application start must be sector aligned");
+_Static_assert((APP_END_ADDRESS % FLASH_SECTOR_SIZE) == 0U, "application end must be sector aligned");
+_Static_assert((WAKE_JOURNAL_START % FLASH_SECTOR_SIZE) == 0U, "wake journal start must be sector aligned");
+_Static_assert((WAKE_JOURNAL_END % FLASH_SECTOR_SIZE) == 0U, "wake journal end must be sector aligned");
+_Static_assert(APP_END_ADDRESS == WAKE_JOURNAL_START, "application must end before wake journal");
+_Static_assert(WAKE_JOURNAL_END == PROVISION_SECTOR_START, "wake journal must end before provisioning");
+_Static_assert(DEVICE_SERIAL_NUMBER_ADDRESS >= PROVISION_SECTOR_START, "serial must remain in provisioning sector");
+_Static_assert(PROVISION_CHUNK_ADDRESS >= PROVISION_SECTOR_START, "provisioning must remain in sector 7");
 
 #include "board/can.h"
 #include "board/comms_definitions.h"

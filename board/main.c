@@ -5,6 +5,7 @@
 #include "board/drivers/pwm.h"
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
+#include "board/drivers/wake_journal.h"
 #include "board/drivers/bootkick.h"
 
 #include "board/early_init.h"
@@ -114,6 +115,8 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
 #define WAKE_MONITOR_CAN_LED_HOLD_S 5U
 
+static const uint8_t wake_journal_empty_data[8] = {0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+
 // called at 8Hz
 static void tick_handler(void) {
   static uint32_t siren_countdown = 0; // siren plays while countdown > 0
@@ -164,6 +167,8 @@ static void tick_handler(void) {
           (old_harness_status == HARNESS_STATUS_NC) &&
           (harness.status != HARNESS_STATUS_NC) && !wake_monitor_harness_requested) {
         if (bootkick_request_wake_pulse(0x37U)) {
+          wake_journal_queue_event(WAKE_JOURNAL_SOURCE_HARNESS, 0x37U, 3U, 3U,
+                                   0U, 0U, wake_journal_empty_data);
           wake_monitor_harness_requested = true;
         }
       }
@@ -253,6 +258,8 @@ static void tick_handler(void) {
           wake_monitor_som_off_countdown = 0U;
           wake_monitor_can_armed = false;
           wake_monitor_can_activity_pending = false;
+          wake_monitor_tesla_event_pending = false;
+          wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         } else {
         }
       }
@@ -309,6 +316,8 @@ static void tick_handler(void) {
         wake_monitor_can_wake_requested = true;
         wake_monitor_can_dispatch_pending = true;
         wake_monitor_can_dispatch_stage = 0x35U;
+        wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_RATE, 0x35U, 3U, 3U,
+                                 0U, 0U, wake_journal_empty_data);
         wake_debug_stage(0x43U);
         if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
           wake_monitor_can_dispatch_pending = false;
@@ -339,6 +348,8 @@ static void tick_handler(void) {
       bool started = harness_check_ignition() || ignition_can;
       if (wake_monitor_enabled && wake_monitor_som_off_ready && started && !wake_monitor_reset_requested) {
         if (bootkick_request_wake_pulse(0x32U)) {
+          wake_journal_queue_event(WAKE_JOURNAL_SOURCE_IGNITION, 0x32U, 3U, 3U,
+                                   0U, 0U, wake_journal_empty_data);
           wake_monitor_reset_requested = true;
         }
       }
@@ -382,7 +393,14 @@ static void tick_handler(void) {
         wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
         if (wake_was_requested) {
-          wake_debug_latch_success(wake_debug.stage);
+          // Recovery stages describe progress, not the original wake source.
+          // Preserve 0x34/0x35 even when heartbeat returns after reset/0x41.
+          const uint32_t success_stage = bootkick_success_source_stage(
+            bootkick_wake_confirmation_pending, bootkick_wake_trigger_stage, wake_debug.stage);
+          wake_journal_queue_result(true, bootkick_wake_attempts, bootkick_wake_uart_seen,
+                                    bootkick_wake_reset_attempted, current_board->read_som_gpio(),
+                                    true, success_stage, wake_debug.stage, wake_debug.reset_reason);
+          wake_debug_latch_success(success_stage);
         }
         wake_debug_stage(0x38U);
       }
@@ -518,6 +536,7 @@ int main(void) {
   led_set(LED_GREEN, true);
   adc_init(ADC1);
   wake_debug_init();
+  wake_journal_init();
   bootkick_debug_restore();
 
   // print hello
@@ -584,6 +603,7 @@ int main(void) {
 
   // LED should keep on blinking all the time
   while (true) {
+    wake_journal_flush_pending((current_safety_mode == SAFETY_SILENT) && !controls_allowed);
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
       enter_stop_mode();

@@ -144,12 +144,20 @@ def test_offline_monitor_does_not_buffer_stale_can_for_restarted_host():
   assert "queue_for_host = !wake_monitor_enabled || !wake_monitor_som_off_seen" in fdcan_source
 
 
-def test_tesla_wake_event_latches_only_after_shutdown_settle():
+def test_tesla_wake_event_latches_during_shutdown_settle_for_deferred_dispatch():
   source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   wake_latch = source.split("const uint8_t tesla_source =", 1)[1].split("#endif", 1)[0]
 
-  assert "wake_monitor_enabled ? tesla_wake_source" in wake_latch
-  assert "wake_monitor_som_off_ready &&" in wake_latch
+  assert "tesla_wake_source(&to_push, can_number)" in wake_latch
+  assert "bootkick_tesla_event_should_latch(" in wake_latch
+  assert "wake_monitor_enabled, wake_monitor_som_off_seen" in wake_latch
+  assert "wake_monitor_som_off_ready &&" not in wake_latch
+
+  settle_cancel = (PANDA_ROOT / "board/main.c").read_text().split(
+    "wake_monitor_som_off_seen && !wake_monitor_som_off_ready", 1
+  )[1].split("} else {", 1)[0]
+  assert "wake_monitor_tesla_event_pending = false;" in settle_cancel
+  assert "wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;" in settle_cancel
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 
