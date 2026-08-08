@@ -45,13 +45,27 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(offline_wake_cuatro_exti_lines(true) == ((1UL << 1) | (1UL << 4) | (1UL << 8) | (1UL << 12)));
 
       const uint32_t raw_lines = offline_wake_tres_can_exti_lines(false);
-      assert(offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 8, raw_lines));
-      assert(offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 5, raw_lines));
-      assert(!offline_wake_raw_can_edge_ready(false, true, true, false, 1UL << 8, raw_lines));
-      assert(!offline_wake_raw_can_edge_ready(true, false, true, false, 1UL << 8, raw_lines));
-      assert(!offline_wake_raw_can_edge_ready(true, true, false, false, 1UL << 8, raw_lines));
-      assert(!offline_wake_raw_can_edge_ready(true, true, true, true, 1UL << 8, raw_lines));
-      assert(!offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 12, raw_lines));
+      assert(offline_wake_raw_can_edge_hint_ready(true, true, true, false, 1UL << 8, raw_lines));
+      assert(offline_wake_raw_can_edge_hint_ready(true, true, true, false, 1UL << 5, raw_lines));
+      assert(!offline_wake_raw_can_edge_hint_ready(false, true, true, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_hint_ready(true, false, true, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_hint_ready(true, true, false, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, true, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, false, 1UL << 12, raw_lines));
+
+      assert(!offline_wake_can_rate_increase(1U, 0U));
+      assert(!offline_wake_can_rate_increase(100U, 100U));
+      assert(!offline_wake_can_rate_increase(140U, 100U));
+      assert(offline_wake_can_rate_increase(250U, 100U));
+      assert(offline_wake_can_rate_increase(50U, 0U));
+
+      uint8_t confirmation = 0U;
+      assert(!offline_wake_can_rate_confirm_step(true, &confirmation));
+      assert(confirmation == 1U);
+      assert(offline_wake_can_rate_confirm_step(true, &confirmation));
+      assert(confirmation == WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S);
+      assert(!offline_wake_can_rate_confirm_step(false, &confirmation));
+      assert(confirmation == 0U);
       return 0;
     }
     """
@@ -73,14 +87,17 @@ def test_arming_wake_monitor_does_not_clear_latched_success():
   assert arm_case.index("enable_can_transceivers(true);") < arm_case.index("current_board->set_bootkick(BOOT_STANDBY);")
 
 
-def test_tres_active_monitor_arms_raw_can_edges_after_settle():
+def test_tres_active_monitor_uses_raw_can_edges_only_as_sampling_hints():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
 
   settle_path = main_source.split("wake_monitor_som_off_countdown == 0U", 1)[1].split("} else {", 1)[0]
   assert "offline_wake_raw_can_exti_arm();" in settle_path
-  assert "offline_wake_raw_can_edge_ready(" in power_source
-  assert "wake_monitor_can_activity_pending = true;" in power_source
+  assert "offline_wake_raw_can_edge_hint_ready(" in power_source
+  raw_irq = power_source.split("offline_wake_raw_can_exti_irq_handler", 1)[1].split("offline_wake_raw_can_exti_init", 1)[0]
+  assert "wake_monitor_raw_can_edge_pending = true;" in raw_irq
+  assert "wake_monitor_can_activity_pending = true;" not in raw_irq
+  assert "wake_can_trace_set_source" not in raw_irq
   assert "wake_debug_can_exti(pending);" in power_source
   assert "offline_wake_raw_can_exti_disarm();" in power_source
   assert "REGISTER_INTERRUPT(EXTI9_5_IRQn" in power_source
@@ -136,12 +153,14 @@ def test_tesla_wake_event_latches_only_after_shutdown_settle():
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 
-def test_single_can_frame_after_settle_requests_wake():
+def test_background_can_requires_a_sustained_rate_increase_to_request_wake():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
+  policy_source = (PANDA_ROOT / "board/drivers/offline_wake_source_policy.h").read_text()
 
-  assert "wake_monitor_can_activity_pending = true;" in fdcan_source
+  assert "wake_monitor_can_activity_pending = true;" not in fdcan_source
+  assert "offline_wake_can_rate_increase(" in main_source
+  assert "offline_wake_can_rate_confirm_step(" in main_source
   assert "bootkick_can_activity_ready(" in main_source
-  assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" not in main_source
-  assert "WAKE_MONITOR_CAN_RATE_DELTA" not in main_source
+  assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" in policy_source
   assert "wake_monitor_can_wake_requested = true;" in main_source

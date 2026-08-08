@@ -231,6 +231,9 @@ static void tick_handler(void) {
               set_power_save_state(policy.request_power_save);
             }
           } else if (!wake_monitor_som_off_ready) {
+            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+              wake_monitor_can_baseline[i] = MAX(wake_monitor_can_baseline[i], rx_per_bus[i]);
+            }
             if (wake_monitor_som_off_countdown > 0U) {
               wake_monitor_som_off_countdown -= 1U;
             }
@@ -252,6 +255,27 @@ static void tick_handler(void) {
           wake_monitor_can_activity_pending = false;
         } else {
         }
+      }
+
+      bool can_rate_candidate = false;
+      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
+          !wake_monitor_can_wake_requested) {
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          can_rate_candidate |= offline_wake_can_rate_increase(rx_per_bus[i], wake_monitor_can_baseline[i]);
+        }
+        if (can_rate_candidate) {
+          wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
+        }
+        if (offline_wake_can_rate_confirm_step(can_rate_candidate, &wake_monitor_can_activity_confirm_count)) {
+          wake_monitor_can_activity_pending = true;
+        }
+        if (wake_monitor_raw_can_edge_pending) {
+          // Re-arm after the decoded-frame sample has been evaluated. Persistent
+          // background edges can keep waking Panda, but cannot directly wake SoM.
+          offline_wake_raw_can_exti_arm();
+        }
+      } else {
+        (void)offline_wake_can_rate_confirm_step(false, &wake_monitor_can_activity_confirm_count);
       }
 
       if (bootkick_tesla_event_ready(
@@ -280,7 +304,6 @@ static void tick_handler(void) {
       if (bootkick_can_activity_ready(
             wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
             wake_monitor_can_activity_pending, wake_monitor_can_wake_requested)) {
-        wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
         wake_monitor_can_activity_pending = false;
         wake_monitor_can_led_countdown = WAKE_MONITOR_CAN_LED_HOLD_S;
         wake_monitor_can_wake_requested = true;
@@ -334,7 +357,7 @@ static void tick_handler(void) {
           ((uint8_t)wake_monitor_som_off_ready * WAKE_CAN_TRACE_FLAG_SOM_OFF_READY) |
           ((uint8_t)wake_monitor_can_armed * WAKE_CAN_TRACE_FLAG_CAN_ARMED) |
           ((uint8_t)wake_monitor_can_wake_requested * WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED) |
-          ((uint8_t)wake_monitor_can_activity_pending * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
+          ((uint8_t)(wake_monitor_can_activity_confirm_count > 0U) * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
           ((uint8_t)ignition_can * WAKE_CAN_TRACE_FLAG_IGNITION_CAN) |
           ((uint8_t)harness_check_ignition() * WAKE_CAN_TRACE_FLAG_IGNITION_LINE);
         wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
@@ -351,6 +374,8 @@ static void tick_handler(void) {
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
         wake_monitor_can_activity_pending = false;
+        wake_monitor_can_activity_confirm_count = 0U;
+        wake_monitor_raw_can_edge_pending = false;
         wake_monitor_can_led_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_can_dispatch_pending = false;

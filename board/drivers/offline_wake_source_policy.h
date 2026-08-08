@@ -8,6 +8,8 @@
 #define OFFLINE_WAKE_FDCAN1_EXTI_LINE (1UL << 8)
 #define OFFLINE_WAKE_TRES_FDCAN3_EXTI_LINE (1UL << 9)
 #define OFFLINE_WAKE_CUATRO_FDCAN3_EXTI_LINE (1UL << 12)
+#define WAKE_MONITOR_CAN_RATE_DELTA 50U
+#define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
 
 typedef struct {
   bool keep_can_active;
@@ -59,11 +61,26 @@ static inline uint32_t offline_wake_tres_exti_lines(bool flipped_harness) {
   return OFFLINE_WAKE_SBU_EXTI_LINES | offline_wake_tres_can_exti_lines(flipped_harness);
 }
 
-static inline bool offline_wake_raw_can_edge_ready(bool monitor_enabled, bool som_off_ready,
-                                                   bool can_armed, bool wake_requested,
-                                                   uint32_t pending_lines, uint32_t armed_lines) {
+static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bool som_off_ready,
+                                                        bool can_armed, bool wake_requested,
+                                                        uint32_t pending_lines, uint32_t armed_lines) {
   return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
          ((pending_lines & armed_lines) != 0U);
+}
+
+static inline bool offline_wake_can_rate_increase(uint32_t current_rate, uint32_t baseline_rate) {
+  const uint32_t delta = (current_rate > baseline_rate) ? (current_rate - baseline_rate) : 0U;
+  return (delta >= WAKE_MONITOR_CAN_RATE_DELTA) && (delta >= baseline_rate);
+}
+
+static inline bool offline_wake_can_rate_confirm_step(bool candidate, volatile uint8_t *confirmation) {
+  if (!candidate) {
+    *confirmation = 0U;
+  } else if (*confirmation < WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S) {
+    *confirmation += 1U;
+  } else {
+  }
+  return *confirmation >= WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S;
 }
 
 static inline uint32_t offline_wake_cuatro_can_exti_lines(bool flipped_harness) {

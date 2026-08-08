@@ -279,13 +279,6 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
-        !wake_monitor_can_wake_requested) {
-      // hardwared already required every physical bus to remain quiet for
-      // 300 seconds. The first valid post-settle FDCAN frame is a wake event;
-      // do not require a sustained high frame rate that can miss a door burst.
-      wake_monitor_can_activity_pending = true;
-    }
     const uint8_t tesla_source = wake_monitor_enabled ? tesla_wake_source(&to_push, can_number) : TESLA_WAKE_SOURCE_NONE;
     if (wake_monitor_som_off_ready && (tesla_source != TESLA_WAKE_SOURCE_NONE) && !wake_monitor_can_wake_requested) {
       // The CAN ISR only latches the event. The 1 Hz monitor owns all BOOTKICK

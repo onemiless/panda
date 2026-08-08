@@ -11,6 +11,8 @@ volatile bool wake_monitor_enabled = false;
 volatile bool wake_monitor_tesla_event_pending = false;
 volatile uint8_t wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
 volatile bool wake_monitor_can_activity_pending = false;
+volatile uint8_t wake_monitor_can_activity_confirm_count = 0U;
+volatile bool wake_monitor_raw_can_edge_pending = false;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_can_dispatch_pending = false;
 volatile uint32_t wake_monitor_can_dispatch_stage = 0U;
@@ -42,16 +44,14 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
   const uint32_t pending = EXTI->PR1 & armed_lines;
   if (pending != 0U) {
     EXTI->PR1 = pending;
-    if (offline_wake_raw_can_edge_ready(
+    if (offline_wake_raw_can_edge_hint_ready(
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, armed_lines)) {
-      // One physical edge is enough after the host already proved 300 seconds
-      // of silence and Panda waited another 10 seconds for SoM power-off.
-      // Disable the raw interrupt immediately so a CAN burst cannot storm the
-      // shared EXTI IRQ before the 1 Hz BOOTKICK dispatcher consumes it.
+      // A raw edge is only a sampling hint. Sleeping Teslas can still produce
+      // periodic traffic, and electrical edges are not proof of a wake event.
+      // The 1 Hz monitor confirms a decoded rate transition before BOOTKICK.
       register_clear_bits(&(EXTI->IMR1), armed_lines);
-      wake_monitor_can_activity_pending = true;
-      wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
+      wake_monitor_raw_can_edge_pending = true;
       wake_debug_can_exti(pending);
     }
   }
@@ -64,6 +64,7 @@ static void offline_wake_raw_can_exti_init(void) {
 
 static void offline_wake_raw_can_exti_arm(void) {
   offline_wake_raw_can_exti_disarm();
+  wake_monitor_raw_can_edge_pending = false;
   if (hw_type != HW_TYPE_TRES) {
     return;
   }
