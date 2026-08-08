@@ -635,6 +635,7 @@ class Panda:
     flags = (a[1] >> 16) & 0xFF
     peak_bus = (a[1] >> 24) & 0xFF
     wake_source = {
+      0xFC: "rawCanEdge",
       0xFD: "teslaDoor",
       0xFE: "teslaPower",
     }.get(peak_bus)
@@ -651,7 +652,7 @@ class Panda:
       "rate_candidate": bool(flags & (1 << 5)),
       "ignition_can": bool(flags & (1 << 6)),
       "ignition_line": bool(flags & (1 << 7)),
-      "peak_bus": None if peak_bus >= 0xFD else peak_bus,
+      "peak_bus": None if peak_bus >= 0xFC else peak_bus,
       "wake_source": wake_source,
       "peak_rx_per_sec": [a[2], a[3], a[4]],
       "baseline_per_sec": [a[5], a[6], a[7]],

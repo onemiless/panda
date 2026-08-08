@@ -26,6 +26,69 @@ volatile uint8_t wake_monitor_tesla_front_door_closed_mask = 0U;
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif
+static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
+
+static void offline_wake_raw_can_exti_disarm(void) {
+  const uint32_t lines = wake_monitor_raw_can_exti_lines;
+  if (lines != 0U) {
+    register_clear_bits(&(EXTI->IMR1), lines);
+    EXTI->PR1 = lines;
+    wake_monitor_raw_can_exti_lines = 0U;
+  }
+}
+
+static void offline_wake_raw_can_exti_irq_handler(void) {
+  const uint32_t armed_lines = wake_monitor_raw_can_exti_lines;
+  const uint32_t pending = EXTI->PR1 & armed_lines;
+  if (pending != 0U) {
+    EXTI->PR1 = pending;
+    if (offline_wake_raw_can_edge_ready(
+          wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+          wake_monitor_can_wake_requested, pending, armed_lines)) {
+      // One physical edge is enough after the host already proved 300 seconds
+      // of silence and Panda waited another 10 seconds for SoM power-off.
+      // Disable the raw interrupt immediately so a CAN burst cannot storm the
+      // shared EXTI IRQ before the 1 Hz BOOTKICK dispatcher consumes it.
+      register_clear_bits(&(EXTI->IMR1), armed_lines);
+      wake_monitor_can_activity_pending = true;
+      wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
+      wake_debug_can_exti(pending);
+    }
+  }
+}
+
+static void offline_wake_raw_can_exti_init(void) {
+  REGISTER_INTERRUPT(EXTI9_5_IRQn, offline_wake_raw_can_exti_irq_handler, 100U, FAULT_INTERRUPT_RATE_EXTI)
+  REGISTER_INTERRUPT(EXTI15_10_IRQn, offline_wake_raw_can_exti_irq_handler, 100U, FAULT_INTERRUPT_RATE_EXTI)
+}
+
+static void offline_wake_raw_can_exti_arm(void) {
+  offline_wake_raw_can_exti_disarm();
+  if (hw_type != HW_TYPE_TRES) {
+    return;
+  }
+
+  const bool flipped_harness = harness.status == HARNESS_STATUS_FLIPPED;
+  const uint32_t lines = offline_wake_tres_can_exti_lines(flipped_harness);
+
+  // EXTI observes the input path while each pin remains in its FDCAN
+  // alternate function, so decoded-frame reception continues unchanged.
+  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
+  if (flipped_harness) {
+    register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
+  } else {
+    register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
+  }
+  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
+
+  wake_monitor_raw_can_exti_lines = lines;
+  EXTI->PR1 = lines;
+  register_set_bits(&(EXTI->RTSR1), lines);
+  register_set_bits(&(EXTI->FTSR1), lines);
+  register_set_bits(&(EXTI->IMR1), lines);
+  NVIC_EnableIRQ(EXTI9_5_IRQn);
+  NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
 
 void enable_can_transceivers(bool enabled) {
   // Leave main CAN always on for CAN-based ignition detection

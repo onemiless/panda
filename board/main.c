@@ -238,6 +238,7 @@ static void tick_handler(void) {
               wake_monitor_som_off_ready = true;
               wake_monitor_can_armed = true;
               wake_can_trace_clear_peak();
+              offline_wake_raw_can_exti_arm();
               wake_debug_stage(0x3FU);
             }
           } else {
@@ -340,6 +341,7 @@ static void tick_handler(void) {
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
+        offline_wake_raw_can_exti_disarm();
         can_clear(&can_rx_q);
         wake_monitor_enabled = false;
         wake_monitor_tesla_event_pending = false;
@@ -535,6 +537,7 @@ int main(void) {
   // 8Hz timer
   REGISTER_INTERRUPT(TICK_TIMER_IRQ, tick_handler, 10U, FAULT_INTERRUPT_RATE_TICK)
   tick_timer_init();
+  offline_wake_raw_can_exti_init();
 
 #ifdef DEBUG
   print("DEBUG ENABLED\n");

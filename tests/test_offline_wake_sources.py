@@ -43,6 +43,15 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(offline_wake_cuatro_can_exti_lines(true) == ((1UL << 8) | (1UL << 12)));
       assert(offline_wake_cuatro_exti_lines(false) == ((1UL << 1) | (1UL << 4) | (1UL << 5) | (1UL << 8) | (1UL << 12)));
       assert(offline_wake_cuatro_exti_lines(true) == ((1UL << 1) | (1UL << 4) | (1UL << 8) | (1UL << 12)));
+
+      const uint32_t raw_lines = offline_wake_tres_can_exti_lines(false);
+      assert(offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 8, raw_lines));
+      assert(offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 5, raw_lines));
+      assert(!offline_wake_raw_can_edge_ready(false, true, true, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_ready(true, false, true, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_ready(true, true, false, false, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_ready(true, true, true, true, 1UL << 8, raw_lines));
+      assert(!offline_wake_raw_can_edge_ready(true, true, true, false, 1UL << 12, raw_lines));
       return 0;
     }
     """
@@ -62,6 +71,20 @@ def test_arming_wake_monitor_does_not_clear_latched_success():
   assert arm_case.index("set_safety_mode(SAFETY_SILENT, 0U);") < arm_case.index("set_power_save_state(false);")
   assert arm_case.index("set_power_save_state(false);") < arm_case.index("enable_can_transceivers(true);")
   assert arm_case.index("enable_can_transceivers(true);") < arm_case.index("current_board->set_bootkick(BOOT_STANDBY);")
+
+
+def test_tres_active_monitor_arms_raw_can_edges_after_settle():
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
+
+  settle_path = main_source.split("wake_monitor_som_off_countdown == 0U", 1)[1].split("} else {", 1)[0]
+  assert "offline_wake_raw_can_exti_arm();" in settle_path
+  assert "offline_wake_raw_can_edge_ready(" in power_source
+  assert "wake_monitor_can_activity_pending = true;" in power_source
+  assert "wake_debug_can_exti(pending);" in power_source
+  assert "offline_wake_raw_can_exti_disarm();" in power_source
+  assert "REGISTER_INTERRUPT(EXTI9_5_IRQn" in power_source
+  assert "REGISTER_INTERRUPT(EXTI15_10_IRQn" in power_source
 
 
 def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():

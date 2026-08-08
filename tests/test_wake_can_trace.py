@@ -72,6 +72,23 @@ def test_wake_can_trace_decodes_tesla_door_source():
   assert trace["wake_source"] == "teslaDoor"
 
 
+def test_wake_can_trace_decodes_raw_can_edge_source():
+  state = 76 | (0x1F << 16) | (0xFC << 24)
+  payload = Panda.WAKE_CAN_TRACE_STRUCT.pack(
+    0x57435452, state,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  )
+  panda = object.__new__(Panda)
+  panda._handle = FakeHandle(payload)
+
+  trace = panda.wake_can_trace()
+
+  assert trace["peak_bus"] is None
+  assert trace["wake_source"] == "rawCanEdge"
+
+
 def test_wake_can_trace_decodes_tesla_power_source():
   state = 78 | (0x1F << 16) | (0xFE << 24)
   payload = Panda.WAKE_CAN_TRACE_STRUCT.pack(

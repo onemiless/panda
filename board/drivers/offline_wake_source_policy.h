@@ -59,6 +59,13 @@ static inline uint32_t offline_wake_tres_exti_lines(bool flipped_harness) {
   return OFFLINE_WAKE_SBU_EXTI_LINES | offline_wake_tres_can_exti_lines(flipped_harness);
 }
 
+static inline bool offline_wake_raw_can_edge_ready(bool monitor_enabled, bool som_off_ready,
+                                                   bool can_armed, bool wake_requested,
+                                                   uint32_t pending_lines, uint32_t armed_lines) {
+  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
+         ((pending_lines & armed_lines) != 0U);
+}
+
 static inline uint32_t offline_wake_cuatro_can_exti_lines(bool flipped_harness) {
   // Cuatro FDCAN3 (PD12) and flipped FDCAN2 (PB12) share EXTI12 and cannot be
   // routed simultaneously. In the flipped case preserve the already-proven
