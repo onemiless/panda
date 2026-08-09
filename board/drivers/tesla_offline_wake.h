@@ -114,7 +114,7 @@ static inline tesla_offline_wake_result_t tesla_offline_wake_step(
       state->ui_counter = result.counter;
     }
   } else if (((address == 0x102U) || (address == 0x103U)) &&
-             (len == 8U) && (logical_bus == 1U)) {
+             (len == 8U) && (logical_bus == 0U)) {
     const uint8_t door_mask = (address == 0x102U) ? 0x1U : 0x2U;
     const bool previous_known = (state->front_door_known_mask & door_mask) != 0U;
     const bool previous_closed = (state->front_door_closed_mask & door_mask) != 0U;

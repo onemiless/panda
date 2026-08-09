@@ -20,23 +20,31 @@ def test_real_tesla_frame_sequences(tmp_path):
     }
 
     int main(void) {
-      const uint8_t latch_closed[8] = {0U, 0x01U, 0U, 0U, 0U, 0U, 0U, 0U};
-      const uint8_t latch_open[8] = {0U, 0x00U, 0U, 0U, 0U, 0U, 0U, 0U};
-      const uint8_t handle_pulled[8] = {0U, 0x05U, 0U, 0U, 0U, 0U, 0U, 0U};
+      // Captured from the affected vehicle on logical CAN 0. Preserve the
+      // real payload around the latch/handle bits so this regression test
+      // exercises the exact frame shape seen by Panda.
+      const uint8_t left_closed[8] = {0x22U, 0xB3U, 0x88U, 0x04U, 0xB8U, 0x46U, 0x21U, 0x08U};
+      const uint8_t left_open[8] = {0x22U, 0xB2U, 0x88U, 0x04U, 0xB8U, 0x46U, 0x21U, 0x08U};
+      const uint8_t left_handle[8] = {0x22U, 0xB7U, 0x88U, 0x04U, 0xB8U, 0x46U, 0x21U, 0x08U};
+      const uint8_t right_closed[8] = {0x22U, 0xB3U, 0x48U, 0x02U, 0xA8U, 0x1AU, 0x21U, 0x02U};
+      const uint8_t right_open[8] = {0x22U, 0xB2U, 0x48U, 0x02U, 0xA8U, 0x1AU, 0x21U, 0x02U};
 
       tesla_offline_wake_state_t direct = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
-      assert(source_for(&direct, 0x102U, 0U, 8U, latch_closed) == TESLA_WAKE_SOURCE_NONE);
-      assert(direct.front_door_known_mask == 0U);
-      assert(source_for(&direct, 0x102U, 1U, 8U, latch_open) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&direct, 0x102U, 1U, 8U, latch_closed) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&direct, 0x102U, 1U, 8U, latch_open) == TESLA_WAKE_SOURCE_DOOR);
-      assert(source_for(&direct, 0x102U, 1U, 8U, latch_open) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&direct, 0x103U, 1U, 8U, latch_closed) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&direct, 0x103U, 1U, 8U, latch_open) == TESLA_WAKE_SOURCE_DOOR);
+      assert(source_for(&direct, 0x102U, 0U, 8U, left_closed) == TESLA_WAKE_SOURCE_NONE);
+      assert(direct.front_door_known_mask == 0x1U);
+      assert(source_for(&direct, 0x102U, 0U, 8U, left_open) == TESLA_WAKE_SOURCE_DOOR);
+      assert(source_for(&direct, 0x102U, 0U, 8U, left_open) == TESLA_WAKE_SOURCE_NONE);
+      assert(source_for(&direct, 0x103U, 0U, 8U, right_closed) == TESLA_WAKE_SOURCE_NONE);
+      assert(source_for(&direct, 0x103U, 0U, 8U, right_open) == TESLA_WAKE_SOURCE_DOOR);
+
+      // The same addresses on Tesla's vehicle bus must not alter Party-bus
+      // door state or create a wake request.
+      assert(source_for(&direct, 0x102U, 1U, 8U, left_closed) == TESLA_WAKE_SOURCE_NONE);
+      assert(source_for(&direct, 0x102U, 1U, 8U, left_open) == TESLA_WAKE_SOURCE_NONE);
 
       tesla_offline_wake_state_t handle = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
-      assert(source_for(&handle, 0x102U, 0U, 8U, handle_pulled) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&handle, 0x102U, 1U, 8U, handle_pulled) == TESLA_WAKE_SOURCE_DOOR);
+      assert(source_for(&handle, 0x102U, 0U, 8U, left_handle) == TESLA_WAKE_SOURCE_DOOR);
+      assert(source_for(&handle, 0x102U, 1U, 8U, left_handle) == TESLA_WAKE_SOURCE_NONE);
 
       const uint8_t ui_closed_4[7] = {0x18U, 0x04U, 0U, 0U, 0U, 0U, 0U};
       const uint8_t ui_open_5[7] = {0x29U, 0x05U, 0U, 0x10U, 0U, 0U, 0U};

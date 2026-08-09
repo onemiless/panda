@@ -120,12 +120,12 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(tesla_front_door_latch_closed(latch_closed));
       assert(!tesla_front_door_latch_closed(latch_open));
       assert(tesla_front_door_handle_pulled(handle_pulled));
-      assert(tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
-      assert(!tesla_door_latch_wake_ready(1U, 8U, true, false, latch_open));
-      assert(!tesla_door_latch_wake_ready(1U, 8U, false, false, latch_open));
-      assert(tesla_door_latch_wake_ready(1U, 8U, false, false, handle_pulled));
-      assert(!tesla_door_latch_wake_ready(0U, 8U, true, true, latch_open));
-      assert(!tesla_door_latch_wake_ready(1U, 7U, true, true, latch_open));
+      assert(tesla_door_latch_wake_ready(0U, 8U, true, true, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 8U, true, false, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 8U, false, false, latch_open));
+      assert(tesla_door_latch_wake_ready(0U, 8U, false, false, handle_pulled));
+      assert(!tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
+      assert(!tesla_door_latch_wake_ready(0U, 7U, true, true, latch_open));
       return 0;
     }
     """

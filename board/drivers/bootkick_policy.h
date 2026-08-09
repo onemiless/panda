@@ -140,6 +140,8 @@ static inline bool tesla_door_latch_wake_ready(uint8_t logical_bus, uint8_t len,
                                                bool previous_known, bool previous_closed,
                                                const uint8_t *data) {
   const bool closed_to_open = previous_known && previous_closed && !tesla_front_door_latch_closed(data);
-  return (logical_bus == 1U) && (len == 8U) &&
+  // VCLEFT/VCRIGHT door-state frames are carried on Tesla's Party bus. Panda
+  // exposes that network as logical bus 0 on the supported HW3/HW4 harnesses.
+  return (logical_bus == 0U) && (len == 8U) &&
          (tesla_front_door_handle_pulled(data) || closed_to_open);
 }
