@@ -69,20 +69,20 @@ typedef struct {
 } wake_success_t;
 
 // Uses the six RTC backup registers left after wake_debug and wake_success.
-// Rates are saturated at UINT16_MAX and describe the largest CAN-rate jump
-// observed after the wake monitor finished learning its baseline.
+// This compact trace survives Panda resets and captures the first post-arm
+// Tesla events without writing flash while the SoM is powered down.
 typedef struct {
   uint32_t magic;
   uint32_t state;
   uint16_t peak_rx_bus0;
   uint16_t peak_rx_bus1;
   uint16_t peak_rx_bus2;
-  uint16_t baseline_bus0;
-  uint16_t baseline_bus1;
-  uint16_t baseline_bus2;
-  uint16_t peak_delta;
-  uint8_t tesla_meta;
-  uint8_t tesla_counters;
+  uint16_t first_event_seconds;
+  uint32_t event_sequence;
+  uint8_t power_meta;
+  uint8_t left_door_meta;
+  uint8_t right_door_meta;
+  uint8_t ui_door_meta;
 } wake_can_trace_t;
 
 typedef struct {

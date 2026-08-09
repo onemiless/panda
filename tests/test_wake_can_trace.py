@@ -17,12 +17,12 @@ class FakeHandle:
 def test_wake_can_trace_decodes_persistent_can_snapshot():
   flags = 0x3F
   state = 1234 | (flags << 16) | (2 << 24)
-  tesla_meta = 0x80 | 0x40 | (2 << 4) | (1 << 2) | 2
+  event_sequence = 0xFDA  # physical bus 2 conditioning, left door, UI door
   payload = Panda.WAKE_CAN_TRACE_STRUCT.pack(
     0x57435452, state,
     120, 340, 560,
-    100, 200, 300,
-    260, tesla_meta, 0xAB,
+    780, event_sequence,
+    0x83, 0xC2, 0xE1, 0xA4,
   )
   panda = object.__new__(Panda)
   panda._handle = FakeHandle(payload)
@@ -43,15 +43,19 @@ def test_wake_can_trace_decodes_persistent_can_snapshot():
     "peak_bus": 2,
     "wake_source": None,
     "peak_rx_per_sec": [120, 340, 560],
-    "baseline_per_sec": [100, 200, 300],
-    "peak_delta": 260,
-    "tesla_seen": True,
-    "tesla_counter_valid": True,
-    "tesla_power_state": 2,
-    "tesla_logical_bus": 1,
-    "tesla_physical_bus": 2,
-    "tesla_previous_counter": 10,
-    "tesla_counter": 11,
+    "first_event_seconds": 780,
+    "event_sequence": ["power:bus2:conditioning", "leftDoor", "uiDoor"],
+    "prearm_power_state": "off",
+    "power_frame_count": 3,
+    "left_door_frame_count": 2,
+    "right_door_frame_count": 1,
+    "ui_door_frame_count": 4,
+    "prearm_left_door_closed": True,
+    "postarm_left_door_closed": False,
+    "prearm_right_door_closed": True,
+    "postarm_right_door_closed": True,
+    "prearm_ui_door_open": False,
+    "postarm_ui_door_open": True,
   }
 
 

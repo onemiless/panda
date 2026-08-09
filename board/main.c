@@ -267,11 +267,9 @@ static void tick_handler(void) {
       bool can_rate_candidate = false;
       if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
           !wake_monitor_can_wake_requested) {
+        wake_can_trace_capture_rates(rx_per_bus);
         for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
           can_rate_candidate |= offline_wake_can_rate_increase(rx_per_bus[i], wake_monitor_can_baseline[i]);
-        }
-        if (can_rate_candidate) {
-          wake_can_trace_capture_rates(rx_per_bus, wake_monitor_can_baseline);
         }
         if (offline_wake_can_rate_confirm_step(can_rate_candidate, &wake_monitor_can_activity_confirm_count)) {
           wake_monitor_can_activity_pending = true;

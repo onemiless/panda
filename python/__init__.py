@@ -647,8 +647,26 @@ class Panda:
       0xFD: "teslaDoor",
       0xFE: "teslaPower",
     }.get(peak_bus)
-    tesla_meta = a[9]
-    tesla_seen = bool(tesla_meta & 0x80)
+    power_states = ("off", "conditioning", "accessory", "drive")
+    events = []
+    for i in range(8):
+      event = (a[6] >> (i * 4)) & 0xF
+      if event == 0:
+        break
+      if event <= 0xC:
+        encoded = event - 1
+        events.append(f"power:bus{encoded // 4}:{power_states[encoded % 4]}")
+      else:
+        events.append({0xD: "leftDoor", 0xE: "rightDoor", 0xF: "uiDoor"}[event])
+    power_meta, left_meta, right_meta, ui_meta = a[7:11]
+    prearm_power_seen = bool(power_meta & 0x80)
+
+    def binary_prearm(meta):
+      return bool(meta & 0x40) if meta & 0x80 else None
+
+    def binary_postarm(meta):
+      return bool(meta & 0x20) if meta & 0x1F else None
+
     return {
       "magic": a[0],
       "off_seconds": a[1] & 0xFFFF,
@@ -663,15 +681,19 @@ class Panda:
       "peak_bus": None if peak_bus >= 0xFC else peak_bus,
       "wake_source": wake_source,
       "peak_rx_per_sec": [a[2], a[3], a[4]],
-      "baseline_per_sec": [a[5], a[6], a[7]],
-      "peak_delta": a[8],
-      "tesla_seen": tesla_seen,
-      "tesla_counter_valid": tesla_seen and bool(tesla_meta & 0x40),
-      "tesla_power_state": (tesla_meta >> 4) & 0x3 if tesla_seen else None,
-      "tesla_logical_bus": (tesla_meta >> 2) & 0x3 if tesla_seen else None,
-      "tesla_physical_bus": tesla_meta & 0x3 if tesla_seen else None,
-      "tesla_previous_counter": (a[10] >> 4) & 0xF if tesla_seen else None,
-      "tesla_counter": a[10] & 0xF if tesla_seen else None,
+      "first_event_seconds": a[5] or None,
+      "event_sequence": events,
+      "prearm_power_state": power_states[(power_meta >> 5) & 0x3] if prearm_power_seen else None,
+      "power_frame_count": power_meta & 0x1F,
+      "left_door_frame_count": left_meta & 0x1F,
+      "right_door_frame_count": right_meta & 0x1F,
+      "ui_door_frame_count": ui_meta & 0x1F,
+      "prearm_left_door_closed": binary_prearm(left_meta),
+      "postarm_left_door_closed": binary_postarm(left_meta),
+      "prearm_right_door_closed": binary_prearm(right_meta),
+      "postarm_right_door_closed": binary_postarm(right_meta),
+      "prearm_ui_door_open": binary_prearm(ui_meta),
+      "postarm_ui_door_open": binary_postarm(ui_meta),
     }
 
   def wake_journal_info(self, timeout: int = 15000):

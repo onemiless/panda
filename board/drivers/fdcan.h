@@ -9,9 +9,36 @@ static tesla_offline_wake_state_t tesla_wake_state = TESLA_OFFLINE_WAKE_STATE_IN
 static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
   const tesla_offline_wake_result_t result = tesla_offline_wake_step(
     &tesla_wake_state, msg->addr, msg->bus, GET_LEN(msg), msg->data);
-  if (wake_monitor_enabled && wake_monitor_som_off_seen && result.power_frame) {
-    wake_can_trace_tesla(physical_bus, msg->bus, result.power_state, result.previous_counter,
-                         (uint8_t)result.counter, result.counter_valid && result.checksum_valid);
+  if (wake_monitor_enabled) {
+    const bool prearm = !wake_monitor_som_off_seen;
+    const bool postarm = wake_monitor_som_off_ready && wake_monitor_can_armed;
+    if (result.power_frame && result.checksum_valid) {
+      if (prearm) {
+        wake_can_trace_prearm_power(result.power_state);
+      } else if (postarm) {
+        wake_can_trace_postarm_power(physical_bus, result.power_state);
+      } else {
+      }
+    } else if (((msg->addr == 0x102U) || (msg->addr == 0x103U)) &&
+               (msg->bus == 0U) && (GET_LEN(msg) == 8U)) {
+      const bool closed = tesla_front_door_latch_closed(msg->data);
+      if (prearm) {
+        wake_can_trace_prearm_binary(msg->addr, closed);
+      } else if (postarm) {
+        wake_can_trace_postarm_binary(msg->addr, closed, tesla_front_door_handle_pulled(msg->data));
+      } else {
+      }
+    } else if ((msg->addr == 0x311U) && (msg->bus == 0U) &&
+               (GET_LEN(msg) == 7U) && result.checksum_valid) {
+      const bool door_open = tesla_ui_warning_door_open(msg->data);
+      if (prearm) {
+        wake_can_trace_prearm_binary(msg->addr, door_open);
+      } else if (postarm) {
+        wake_can_trace_postarm_binary(msg->addr, door_open, false);
+      } else {
+      }
+    } else {
+    }
   }
   return result.source;
 }
