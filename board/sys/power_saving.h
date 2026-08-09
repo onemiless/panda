@@ -1,5 +1,6 @@
 #include "board/sys/sys.h"
 #include "board/drivers/offline_wake_source_policy.h"
+#include "board/drivers/wake_monitor_policy.h"
 
 // WARNING: To stay in compliance with the SIL2 rules laid out in STM UM2331, we should never use any of the available hardware low power modes during safety function execution.
 // See rule: CoU_3
@@ -21,6 +22,20 @@ volatile bool wake_monitor_som_off_ready = false;
 volatile uint8_t wake_monitor_som_off_countdown = 0U;
 volatile bool wake_monitor_can_armed = false;
 volatile bool wake_monitor_strict_stop_pending = false;
+volatile bool wake_monitor_reset_requested = false;
+volatile bool wake_monitor_harness_requested = false;
+volatile bool wake_monitor_committed = false;
+volatile uint8_t wake_monitor_failure_cooldown = 0U;
+volatile wake_monitor_status_t wake_monitor_status = {
+  .magic = WAKE_MONITOR_STATUS_MAGIC,
+  .transaction = 0U,
+  .host_session = 0U,
+  .committed_host_session = 0U,
+  .state = WAKE_MONITOR_STATE_IDLE,
+  .result = WAKE_MONITOR_RESULT_NONE,
+  .trigger_stage = 0U,
+  .reserved = 0U,
+};
 #ifdef ALLOW_DEBUG
 volatile bool stop_mode_requested = false;
 #endif

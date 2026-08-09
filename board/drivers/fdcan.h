@@ -266,12 +266,14 @@ void can_rx(uint8_t can_number) {
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
     // Always learn the current Tesla door/counter state while the host is
-    // alive. Only latch a wake after heartbeat loss, including the 10 second
-    // shutdown settle window; the 1 Hz owner defers dispatch until armed.
+    // alive. PREPARE may overlap manager cleanup, so preserve a semantic edge
+    // there as well; only COMMIT permits the 1 Hz owner to dispatch it.
     const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
     if (bootkick_tesla_event_should_latch(
-          wake_monitor_enabled, wake_monitor_som_off_seen,
-          tesla_source != TESLA_WAKE_SOURCE_NONE, wake_monitor_can_wake_requested)) {
+          wake_monitor_enabled,
+          wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED),
+          (tesla_source != TESLA_WAKE_SOURCE_NONE) && (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED),
+          wake_monitor_can_wake_requested)) {
       const uint8_t journal_source = (tesla_source == TESLA_WAKE_SOURCE_DOOR) ?
                                        WAKE_JOURNAL_SOURCE_TESLA_DOOR :
                                        WAKE_JOURNAL_SOURCE_TESLA_POWER;

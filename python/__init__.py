@@ -157,7 +157,13 @@ class Panda:
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
   WAKE_PROTOCOL_HEADER = os.path.join(BASEDIR, "board/wake_protocol.h")
   WAKE_MONITOR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ENABLE_WAKE_MONITOR")
+  WAKE_MONITOR_PREPARE_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_PREPARE_WAKE_MONITOR")
+  WAKE_MONITOR_COMMIT_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_COMMIT_WAKE_MONITOR")
+  WAKE_MONITOR_ABORT_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ABORT_WAKE_MONITOR")
+  WAKE_MONITOR_HOST_SESSION_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_SET_HOST_SESSION")
+  WAKE_MONITOR_STATUS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_MONITOR_STATUS")
   WAKE_MONITOR_ARMED_STAGE = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_WAKE_MONITOR_ARMED_STAGE")
+  WAKE_MONITOR_STATUS_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_MONITOR_STATUS_MAGIC")
   WAKE_DEBUG_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_DEBUG_MAGIC")
   WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
   WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
@@ -172,6 +178,7 @@ class Panda:
   WAKE_CAN_TRACE_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_can_trace_t")
   WAKE_JOURNAL_INFO_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_info_t")
   WAKE_JOURNAL_RECORD_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_record_t")
+  WAKE_MONITOR_STATUS_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_monitor_status_t")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -547,6 +554,43 @@ class Panda:
 
   def enable_deepsleep(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_REQUEST, 0, 0, b'')
+
+  @staticmethod
+  def _wake_transaction_words(value: int) -> tuple[int, int]:
+    value &= 0xFFFFFFFF
+    return value & 0xFFFF, (value >> 16) & 0xFFFF
+
+  def prepare_wake_monitor(self, transaction: int):
+    low, high = self._wake_transaction_words(transaction)
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_PREPARE_REQUEST, low, high, b'')
+    return self.wake_monitor_status()
+
+  def commit_wake_monitor(self, transaction: int):
+    low, high = self._wake_transaction_words(transaction)
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_COMMIT_REQUEST, low, high, b'')
+    return self.wake_monitor_status()
+
+  def abort_wake_monitor(self, transaction: int):
+    low, high = self._wake_transaction_words(transaction)
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_ABORT_REQUEST, low, high, b'')
+    return self.wake_monitor_status()
+
+  def set_host_session(self, host_session: int):
+    low, high = self._wake_transaction_words(host_session)
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_HOST_SESSION_REQUEST, low, high, b'')
+
+  def wake_monitor_status(self):
+    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_MONITOR_STATUS_REQUEST, 0, 0, self.WAKE_MONITOR_STATUS_STRUCT.size)
+    a = self.WAKE_MONITOR_STATUS_STRUCT.unpack(dat)
+    return {
+      "magic": a[0],
+      "transaction": a[1],
+      "host_session": a[2],
+      "committed_host_session": a[3],
+      "state": a[4],
+      "result": a[5],
+      "trigger_stage": a[6],
+    }
 
   # ******************* health *******************
 

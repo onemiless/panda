@@ -8,6 +8,9 @@
 
 static bool tres_ir_enabled;
 static bool tres_fan_enabled;
+#ifndef BOOTSTUB
+extern volatile bool bootkick_wake_confirmation_pending;
+#endif
 static void tres_update_fan_ir_power(void) {
   set_gpio_output(GPIOD, 3, tres_ir_enabled || tres_fan_enabled);
 }
@@ -115,7 +118,14 @@ static void tres_init(void) {
 
   // SOM bootkick + reset lines
   // WARNING: make sure output state is set before configuring as output
+  #ifdef BOOTSTUB
   tres_set_bootkick(BOOT_BOOTKICK);
+  #else
+  // On a normal cold boot Panda must start the SoM. When recovering an
+  // in-flight offline wake attempt, initialize directly to STANDBY instead;
+  // a low-then-high GPIO glitch can be interpreted as a truncated BOOTKICK.
+  tres_set_bootkick(bootkick_wake_confirmation_pending ? BOOT_STANDBY : BOOT_BOOTKICK);
+  #endif
   set_gpio_mode(GPIOC, 12, MODE_OUTPUT);
 
   // SOM debugging UART

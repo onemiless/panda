@@ -6,6 +6,55 @@ extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 void set_safety_mode(uint16_t mode, uint16_t param);
 bool is_car_safety_mode(uint16_t mode);
 
+static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
+  return ((uint32_t)req->param2 << 16U) | req->param1;
+}
+
+static void wake_monitor_reset_runtime(void) {
+  offline_wake_raw_can_exti_disarm();
+  wake_monitor_tesla_event_pending = false;
+  wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+  wake_monitor_can_activity_pending = false;
+  wake_monitor_can_activity_confirm_count = 0U;
+  wake_monitor_raw_can_edge_pending = false;
+  wake_monitor_can_wake_requested = false;
+  wake_monitor_can_dispatch_pending = false;
+  wake_monitor_can_dispatch_stage = 0U;
+  wake_monitor_som_off_seen = false;
+  wake_monitor_som_off_ready = false;
+  wake_monitor_som_off_countdown = 0U;
+  wake_monitor_can_armed = false;
+  wake_monitor_strict_stop_pending = false;
+  wake_monitor_reset_requested = false;
+  wake_monitor_harness_requested = false;
+  wake_monitor_failure_cooldown = 0U;
+  bootkick_cancel_wake_pulse();
+  bootkick_clear_wake_confirmation();
+  current_board->set_bootkick(BOOT_STANDBY);
+}
+
+static void wake_monitor_prepare(uint32_t transaction, bool committed) {
+  wake_monitor_reset_runtime();
+  wake_monitor_enabled = true;
+  wake_monitor_committed = committed;
+  wake_monitor_status.magic = WAKE_MONITOR_STATUS_MAGIC;
+  wake_monitor_status.transaction = transaction;
+  wake_monitor_status.committed_host_session = committed ? wake_monitor_status.host_session : 0U;
+  wake_monitor_status.state = committed ? WAKE_MONITOR_STATE_COMMITTED : WAKE_MONITOR_STATE_PREPARED;
+  wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+  wake_monitor_status.trigger_stage = 0U;
+  wake_can_trace_reset();
+  wake_journal_begin_cycle();
+  wake_debug_clear_success();
+  set_safety_mode(SAFETY_SILENT, 0U);
+  set_power_save_state(false);
+  enable_can_transceivers(true);
+  #ifdef ALLOW_DEBUG
+  stop_mode_requested = false;
+  #endif
+  wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
+}
+
 static int get_health_pkt(void *dat) {
   COMPILE_TIME_ASSERT(sizeof(struct health_t) <= USBPACKET_MAX_SIZE);
   struct health_t * health = (struct health_t*)dat;
@@ -102,40 +151,51 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[1] = ((fan_state.rpm & 0xFF00U) >> 8U);
       resp_len = 2;
       break;
-    // **** 0xb5: keep panda awake as a CAN wake monitor while SoM is down
+    // **** 0xb5: legacy one-phase wake monitor arm
     case PANDA_REQUEST_ENABLE_WAKE_MONITOR:
-      offline_wake_raw_can_exti_disarm();
-      wake_monitor_enabled = true;
-      wake_monitor_tesla_event_pending = false;
-      wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
-      wake_monitor_can_activity_pending = false;
-      wake_monitor_can_activity_confirm_count = 0U;
-      wake_monitor_raw_can_edge_pending = false;
-      wake_monitor_can_wake_requested = false;
-      wake_monitor_can_dispatch_pending = false;
-      wake_monitor_can_dispatch_stage = 0U;
-      wake_monitor_som_off_seen = false;
-      wake_monitor_som_off_ready = false;
-      wake_monitor_som_off_countdown = 0U;
-      wake_monitor_can_armed = false;
-      wake_monitor_strict_stop_pending = false;
-      // Keep the door/counter state learned from live traffic. Resetting it at
-      // shutdown loses the closed state needed to recognise a real open edge.
-      wake_can_trace_reset();
-      wake_journal_begin_cycle();
-      bootkick_cancel_wake_pulse();
-      bootkick_clear_wake_confirmation();
-      set_safety_mode(SAFETY_SILENT, 0U);
-      set_power_save_state(false);
-      // set_safety_mode reinitializes FDCAN, but power_save_enabled can
-      // already be false while individual transceiver enable pins retain a
-      // stale state. Reassert every physical receiver before the host exits.
-      enable_can_transceivers(true);
-      current_board->set_bootkick(BOOT_STANDBY);
-      #ifdef ALLOW_DEBUG
-      stop_mode_requested = false;
-      #endif
-      wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
+      wake_monitor_prepare(UINT32_MAX, true);
+      break;
+    // **** 0xb7: non-triggering wake monitor preparation
+    case PANDA_REQUEST_PREPARE_WAKE_MONITOR: {
+      const uint32_t transaction = wake_monitor_request_transaction(req);
+      const wake_monitor_prepare_action_t action = wake_monitor_prepare_action(
+        wake_monitor_status.state, wake_monitor_status.transaction, transaction);
+      if (action == WAKE_MONITOR_PREPARE_START) {
+        wake_monitor_prepare(transaction, false);
+      }
+      break;
+    }
+    // **** 0xb8: final handoff after manager cleanup
+    case PANDA_REQUEST_COMMIT_WAKE_MONITOR: {
+      const uint32_t transaction = wake_monitor_request_transaction(req);
+      if (wake_monitor_commit_allowed(wake_monitor_status.state, wake_monitor_status.transaction, transaction)) {
+        wake_monitor_committed = true;
+        wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
+        wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
+        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        current_board->set_bootkick(BOOT_STANDBY);
+        wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
+      }
+      break;
+    }
+    // **** 0xb9: cancel one matching shutdown transaction
+    case PANDA_REQUEST_ABORT_WAKE_MONITOR: {
+      const uint32_t transaction = wake_monitor_request_transaction(req);
+      if ((transaction != 0U) && (transaction == wake_monitor_status.transaction)) {
+        wake_monitor_reset_runtime();
+        wake_monitor_enabled = false;
+        wake_monitor_committed = false;
+        wake_monitor_status.transaction = 0U;
+        wake_monitor_status.committed_host_session = 0U;
+        wake_monitor_status.state = WAKE_MONITOR_STATE_IDLE;
+        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        wake_monitor_status.trigger_stage = 0U;
+      }
+      break;
+    }
+    // **** 0xba: identify the current Linux boot session
+    case PANDA_REQUEST_SET_HOST_SESSION:
+      wake_monitor_status.host_session = wake_monitor_request_transaction(req);
       break;
     // **** 0xb6: schedule bootkick test after N seconds
     case 0xb6:
@@ -285,6 +345,12 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       }
       break;
     }
+    // **** 0xeb: read transaction/session state
+    case PANDA_REQUEST_GET_WAKE_MONITOR_STATUS:
+      COMPILE_TIME_ASSERT(sizeof(wake_monitor_status_t) <= USBPACKET_MAX_SIZE);
+      resp_len = sizeof(wake_monitor_status);
+      (void)memcpy(resp, (const uint8_t *)&wake_monitor_status, resp_len);
+      break;
     // **** 0xd6: get version
     case 0xd6:
       COMPILE_TIME_ASSERT(sizeof(gitversion) <= USBPACKET_MAX_SIZE);

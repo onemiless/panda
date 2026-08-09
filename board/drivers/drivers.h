@@ -3,6 +3,7 @@
 #include "board/can.h"
 #include "board/health.h"
 #include "board/crc.h"
+#include "board/wake_protocol.h"
 #ifdef STM32H7
 #include "board/stm32h7/lladc_declarations.h"
 #endif
@@ -61,8 +62,13 @@ extern volatile bool wake_monitor_som_off_ready;
 extern volatile uint8_t wake_monitor_som_off_countdown;
 extern volatile bool wake_monitor_can_armed;
 extern volatile bool wake_monitor_strict_stop_pending;
+extern volatile bool wake_monitor_committed;
+extern volatile uint8_t wake_monitor_failure_cooldown;
+extern volatile wake_monitor_status_t wake_monitor_status;
 extern bool can_silent;
 extern bool can_loopback;
+
+void wake_monitor_attempt_failed(void);
 
 // ******************* functions prototypes *********************
 bool can_init(uint8_t can_number);

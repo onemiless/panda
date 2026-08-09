@@ -112,10 +112,31 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
-#define WAKE_MONITOR_SOM_OFF_SETTLE_S 10U
+#define WAKE_MONITOR_SOM_OFF_SETTLE_S 45U
 #define WAKE_MONITOR_CAN_LED_HOLD_S 5U
+#define WAKE_MONITOR_FAILURE_COOLDOWN_S 10U
 
 static const uint8_t wake_journal_empty_data[8] = {0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+
+void wake_monitor_attempt_failed(void) {
+  if (!wake_monitor_enabled || !wake_monitor_committed) {
+    return;
+  }
+
+  wake_monitor_can_wake_requested = false;
+  wake_monitor_can_dispatch_pending = false;
+  wake_monitor_can_dispatch_stage = 0U;
+  wake_monitor_tesla_event_pending = false;
+  wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+  wake_monitor_can_activity_pending = false;
+  wake_monitor_can_activity_confirm_count = 0U;
+  wake_monitor_reset_requested = false;
+  wake_monitor_harness_requested = false;
+  wake_monitor_can_armed = false;
+  wake_monitor_failure_cooldown = WAKE_MONITOR_FAILURE_COOLDOWN_S;
+  wake_monitor_status.state = WAKE_MONITOR_STATE_FAILED;
+  wake_monitor_status.result = WAKE_MONITOR_RESULT_FAILED;
+}
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -124,8 +145,6 @@ static void tick_handler(void) {
   static uint8_t prev_harness_status = HARNESS_STATUS_NC;
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
-  static bool wake_monitor_reset_requested = false;
-  static bool wake_monitor_harness_requested = false;
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
   static uint8_t wake_monitor_can_led_countdown = 0U;
@@ -170,6 +189,9 @@ static void tick_handler(void) {
           wake_journal_queue_event(WAKE_JOURNAL_SOURCE_HARNESS, 0x37U, 3U, 3U,
                                    0U, 0U, wake_journal_empty_data);
           wake_monitor_harness_requested = true;
+          wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
+          wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+          wake_monitor_status.trigger_stage = 0x37U;
         }
       }
     }
@@ -204,7 +226,7 @@ static void tick_handler(void) {
           wake_monitor_can_baseline[i] = rx_per_bus[i];
         }
       }
-      if (wake_monitor_enabled) {
+      if (wake_monitor_enabled && wake_monitor_committed) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
@@ -217,13 +239,14 @@ static void tick_handler(void) {
               wake_monitor_som_off_ready = false;
               wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
               wake_monitor_can_armed = false;
+              wake_monitor_status.state = WAKE_MONITOR_STATE_GUARD;
               // pandad is gone and can no longer drain this queue. Keep only
               // counters/detectors while offline so the restarted host never
               // fingerprints against stale pre-shutdown traffic.
               can_clear(&can_rx_q);
-              // hardwared already proved every physical CAN bus quiet for
-              // 300 seconds. Freeze that pre-shutdown baseline so a real wake
-              // during the settle window cannot be learned away.
+              // Freeze the live-traffic baseline. Tesla can continue emitting
+              // sleeping traffic, so the guard must not learn a real wake burst
+              // into the baseline before dispatch is permitted.
               wake_debug_stage(0x39U);
             } else {
               wake_monitor_som_off_ready = true;
@@ -236,37 +259,25 @@ static void tick_handler(void) {
               set_power_save_state(policy.request_power_save);
             }
           } else if (!wake_monitor_som_off_ready) {
-            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-              wake_monitor_can_baseline[i] = MAX(wake_monitor_can_baseline[i], rx_per_bus[i]);
-            }
             if (wake_monitor_som_off_countdown > 0U) {
               wake_monitor_som_off_countdown -= 1U;
             }
             if (wake_monitor_som_off_countdown == 0U) {
               wake_monitor_som_off_ready = true;
               wake_monitor_can_armed = true;
-              wake_can_trace_clear_peak();
               offline_wake_raw_can_exti_arm();
+              wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
               wake_debug_stage(0x3FU);
             }
           } else {
           }
-        } else if (wake_monitor_som_off_seen && !wake_monitor_som_off_ready) {
-          // Ignore a short heartbeat gap while Linux is still alive. A real
-          // shutdown must restart the full settle sequence.
-          wake_monitor_som_off_seen = false;
-          wake_monitor_som_off_countdown = 0U;
-          wake_monitor_can_armed = false;
-          wake_monitor_can_activity_pending = false;
-          wake_monitor_tesla_event_pending = false;
-          wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         } else {
         }
       }
 
       bool can_rate_candidate = false;
-      if (wake_monitor_enabled && wake_monitor_som_off_ready && wake_monitor_can_armed &&
-          !wake_monitor_can_wake_requested) {
+      if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
+          (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {
         wake_can_trace_capture_rates(rx_per_bus);
         for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
           can_rate_candidate |= offline_wake_can_rate_increase(rx_per_bus[i], wake_monitor_can_baseline[i]);
@@ -274,7 +285,7 @@ static void tick_handler(void) {
         if (offline_wake_can_rate_confirm_step(can_rate_candidate, &wake_monitor_can_activity_confirm_count)) {
           wake_monitor_can_activity_pending = true;
         }
-        if (wake_monitor_raw_can_edge_pending) {
+        if (wake_monitor_som_off_ready && wake_monitor_can_armed && wake_monitor_raw_can_edge_pending) {
           // Re-arm after the decoded-frame sample has been evaluated. Persistent
           // background edges can keep waking Panda, but cannot directly wake SoM.
           offline_wake_raw_can_exti_arm();
@@ -293,6 +304,9 @@ static void tick_handler(void) {
         wake_monitor_can_activity_pending = false;
         wake_monitor_can_dispatch_pending = true;
         wake_monitor_can_dispatch_stage = 0x34U;
+        wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
+        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        wake_monitor_status.trigger_stage = 0x34U;
         if (tesla_event_source == TESLA_WAKE_SOURCE_DOOR) {
           wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_DOOR);
         } else if (tesla_event_source == TESLA_WAKE_SOURCE_POWER) {
@@ -314,6 +328,9 @@ static void tick_handler(void) {
         wake_monitor_can_wake_requested = true;
         wake_monitor_can_dispatch_pending = true;
         wake_monitor_can_dispatch_stage = 0x35U;
+        wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
+        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        wake_monitor_status.trigger_stage = 0x35U;
         wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_RATE, 0x35U, 3U, 3U,
                                  0U, 0U, wake_journal_empty_data);
         wake_debug_stage(0x43U);
@@ -324,6 +341,16 @@ static void tick_handler(void) {
       }
       if (wake_monitor_can_led_countdown > 0U) {
         wake_monitor_can_led_countdown -= 1U;
+      }
+
+      if (wake_monitor_enabled && wake_monitor_committed &&
+          (wake_monitor_status.state == WAKE_MONITOR_STATE_FAILED) && (wake_monitor_failure_cooldown > 0U)) {
+        if (wake_monitor_failure_cooldown_step(&wake_monitor_failure_cooldown)) {
+          wake_monitor_can_armed = true;
+          wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
+          offline_wake_raw_can_exti_arm();
+          wake_debug_stage(0x3FU);
+        }
       }
 
       // A Tesla wake frame can arrive on the FDCAN interrupt boundary while
@@ -349,6 +376,9 @@ static void tick_handler(void) {
           wake_journal_queue_event(WAKE_JOURNAL_SOURCE_IGNITION, 0x32U, 3U, 3U,
                                    0U, 0U, wake_journal_empty_data);
           wake_monitor_reset_requested = true;
+          wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
+          wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+          wake_monitor_status.trigger_stage = 0x32U;
         }
       }
       const bool wake_was_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested || wake_monitor_reset_requested;
@@ -372,10 +402,16 @@ static void tick_handler(void) {
         wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
       }
 
-      if (wake_monitor_enabled && wake_monitor_som_off_seen && recent_heartbeat) {
+      const bool wake_attempted = wake_was_requested || bootkick_wake_confirmation_pending ||
+                                  (bootkick_wake_attempts > 0U);
+      const wake_monitor_heartbeat_result_t heartbeat_result = wake_monitor_heartbeat_result(
+        wake_monitor_committed, wake_monitor_som_off_seen && recent_heartbeat,
+        wake_monitor_status.host_session, wake_monitor_status.committed_host_session, wake_attempted);
+      if (wake_monitor_enabled && (heartbeat_result != WAKE_MONITOR_HEARTBEAT_IGNORE)) {
         offline_wake_raw_can_exti_disarm();
         can_clear(&can_rx_q);
         wake_monitor_enabled = false;
+        wake_monitor_committed = false;
         wake_monitor_tesla_event_pending = false;
         wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         wake_monitor_som_off_seen = false;
@@ -390,7 +426,7 @@ static void tick_handler(void) {
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
-        if (wake_was_requested) {
+        if (heartbeat_result == WAKE_MONITOR_HEARTBEAT_CONFIRMED) {
           // Recovery stages describe progress, not the original wake source.
           // Preserve 0x34/0x35 even when heartbeat returns after reset/0x41.
           const uint32_t success_stage = bootkick_success_source_stage(
@@ -399,13 +435,20 @@ static void tick_handler(void) {
                                     bootkick_wake_reset_attempted, current_board->read_som_gpio(),
                                     true, success_stage, wake_debug.stage, wake_debug.reset_reason);
           wake_debug_latch_success(success_stage);
+          wake_monitor_status.state = WAKE_MONITOR_STATE_SUCCESS;
+          wake_monitor_status.result = WAKE_MONITOR_RESULT_CONFIRMED;
+          wake_monitor_status.trigger_stage = (uint8_t)success_stage;
+        } else {
+          wake_monitor_status.state = WAKE_MONITOR_STATE_UNATTRIBUTED;
+          wake_monitor_status.result = wake_monitor_unattributed_result(wake_monitor_status.result);
         }
         wake_debug_stage(0x38U);
       }
       const bool wake_activity = wake_monitor_enabled &&
                                  (wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
                                   wake_monitor_reset_requested);
-      bootkick_tick(started || wake_activity, recent_heartbeat);
+      bootkick_tick(started || wake_activity, heartbeat_result != WAKE_MONITOR_HEARTBEAT_IGNORE ? true :
+                                                (!wake_monitor_committed && recent_heartbeat));
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {
@@ -548,10 +591,9 @@ int main(void) {
 
   // init board
   current_board->init();
-  if (bootkick_wake_waiting_for_som_off) {
-    // A pre-STOP ignition edge can arrive while the SoM is still shutting
-    // down. Release BOOTKICK immediately after GPIO initialization so the
-    // deferred wake path can create a fresh edge after SoM power is gone.
+  if (bootkick_wake_confirmation_pending) {
+    // A restored offline attempt must override Tres' normal cold-boot level.
+    // Hold both inputs released before creating a fresh BOOTKICK edge.
     current_board->set_bootkick(BOOT_STANDBY);
   }
   current_board->set_can_mode(CAN_MODE_NORMAL);

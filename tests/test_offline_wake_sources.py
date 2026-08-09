@@ -78,13 +78,18 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
   subprocess.run([str(executable)], check=True)
 
 
-def test_arming_wake_monitor_does_not_clear_latched_success():
+def test_new_prepare_starts_a_clean_transaction_and_configures_receive_only():
   source = (PANDA_ROOT / "board/main_comms.h").read_text()
-  arm_case = source.split("case PANDA_REQUEST_ENABLE_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
-  assert "wake_debug_clear_success();" not in arm_case
-  assert arm_case.index("set_safety_mode(SAFETY_SILENT, 0U);") < arm_case.index("set_power_save_state(false);")
-  assert arm_case.index("set_power_save_state(false);") < arm_case.index("enable_can_transceivers(true);")
-  assert arm_case.index("enable_can_transceivers(true);") < arm_case.index("current_board->set_bootkick(BOOT_STANDBY);")
+  prepare_helper = source.split("static void wake_monitor_prepare(", 1)[1].split("static int get_health_pkt", 1)[0]
+  prepare_case = source.split("case PANDA_REQUEST_PREPARE_WAKE_MONITOR:", 1)[1].split(
+    "case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1
+  )[0]
+
+  assert "wake_debug_clear_success();" in prepare_helper
+  assert prepare_helper.index("set_safety_mode(SAFETY_SILENT, 0U);") < prepare_helper.index("set_power_save_state(false);")
+  assert prepare_helper.index("set_power_save_state(false);") < prepare_helper.index("enable_can_transceivers(true);")
+  assert "if (action == WAKE_MONITOR_PREPARE_START)" in prepare_case
+  assert "wake_monitor_prepare(transaction, false);" in prepare_case
 
 
 def test_tres_active_monitor_uses_raw_can_edges_only_as_sampling_hints():
@@ -106,7 +111,7 @@ def test_tres_active_monitor_uses_raw_can_edges_only_as_sampling_hints():
 
 def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   source = (PANDA_ROOT / "board/main.c").read_text()
-  heartbeat_transition = source.split("if (wake_monitor_enabled) {", 1)[1].split(
+  heartbeat_transition = source.split("if (wake_monitor_enabled && wake_monitor_committed) {", 1)[1].split(
     "if (bootkick_tesla_event_ready(", 1
   )[0]
 
@@ -150,14 +155,14 @@ def test_tesla_wake_event_latches_during_shutdown_settle_for_deferred_dispatch()
 
   assert "tesla_wake_source(&to_push, can_number)" in wake_latch
   assert "bootkick_tesla_event_should_latch(" in wake_latch
-  assert "wake_monitor_enabled, wake_monitor_som_off_seen" in wake_latch
+  assert "wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)" in wake_latch
   assert "wake_monitor_som_off_ready &&" not in wake_latch
 
-  settle_cancel = (PANDA_ROOT / "board/main.c").read_text().split(
-    "wake_monitor_som_off_seen && !wake_monitor_som_off_ready", 1
-  )[1].split("} else {", 1)[0]
-  assert "wake_monitor_tesla_event_pending = false;" in settle_cancel
-  assert "wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;" in settle_cancel
+  # A same-session heartbeat during shutdown cleanup must not erase the event;
+  # only a new Linux session resolves the committed transaction.
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  assert "wake_monitor_heartbeat_result(" in main_source
+  assert "wake_monitor_status.host_session, wake_monitor_status.committed_host_session" in main_source
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 

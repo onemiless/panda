@@ -17,6 +17,7 @@ volatile bool bootkick_wake_uart_seen = false;
 volatile bool bootkick_wake_reset_attempted = false;
 volatile uint8_t bootkick_wake_final_countdown = 0U;
 volatile uint8_t bootkick_wake_post_reset_countdown = 0U;
+volatile uint8_t bootkick_wake_initial_release_countdown = 0U;
 volatile bool bootkick_wake_waiting_for_som_off = false;
 volatile uint8_t bootkick_wake_som_off_countdown = 0U;
 
@@ -33,6 +34,7 @@ volatile uint8_t bootkick_wake_som_off_countdown = 0U;
 bool bootkick_debug_active(void) {
   return (debug_bootkick_countdown > 0U) || bootkick_wake_pulse_active ||
          (bootkick_wake_release_countdown > 0U) || (bootkick_wake_post_reset_countdown > 0U) ||
+         (bootkick_wake_initial_release_countdown > 0U) ||
          bootkick_wake_confirmation_pending;
 }
 
@@ -76,10 +78,12 @@ void bootkick_debug_restore(void) {
       bootkick_wake_attempts = MAX(bootkick_wake_attempts, BOOTKICK_WAKE_MAX_ATTEMPTS);
     } else {
       bootkick_wake_attempts = MAX(bootkick_wake_attempts, 1U);
-      // A bus-1 STOP wake is persisted as 0x34. Resume it immediately after
-      // reset instead of waiting through the normal retry delay.
-      debug_bootkick_hold_countdown = BOOTKICK_WAKE_PULSE_S;
-      bootkick_wake_pulse_active = true;
+      // Board initialization asserts BOOTKICK for normal cold boot. A restored
+      // offline attempt must first release both PMIC inputs long enough to
+      // guarantee a new high-to-low edge.
+      debug_bootkick_hold_countdown = 0U;
+      bootkick_wake_pulse_active = false;
+      bootkick_wake_initial_release_countdown = BOOTKICK_WAKE_RELEASE_S;
       bootkick_wake_retry_countdown = 0U;
     }
   }
@@ -91,6 +95,7 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   bootkick_wake_pulse_active = false;
   bootkick_wake_release_countdown = 0U;
   bootkick_wake_post_reset_countdown = 0U;
+  bootkick_wake_initial_release_countdown = 0U;
   bootkick_wake_confirmation_pending = false;
   bootkick_wake_trigger_stage = 0U;
   bootkick_wake_waiting_for_som_off = false;
@@ -109,6 +114,7 @@ void bootkick_cancel_wake_pulse(void) {
   bootkick_wake_pulse_active = false;
   bootkick_wake_release_countdown = 0U;
   bootkick_wake_post_reset_countdown = 0U;
+  bootkick_wake_initial_release_countdown = 0U;
 }
 
 void bootkick_clear_wake_confirmation(void) {
@@ -121,6 +127,7 @@ void bootkick_clear_wake_confirmation(void) {
   bootkick_wake_reset_attempted = false;
   bootkick_wake_final_countdown = 0U;
   bootkick_wake_post_reset_countdown = 0U;
+  bootkick_wake_initial_release_countdown = 0U;
   bootkick_wake_waiting_for_som_off = false;
   bootkick_wake_som_off_countdown = 0U;
 }
@@ -165,7 +172,13 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   BootState boot_state_prev = boot_state;
   const bool harness_inserted = (harness.status != bootkick_harness_status_prev) && (harness.status != HARNESS_STATUS_NC);
 
-  if (bootkick_wake_waiting_for_som_off) {
+  if (bootkick_wake_initial_release_countdown > 0U) {
+    boot_state = BOOT_STANDBY;
+    bootkick_wake_initial_release_countdown -= 1U;
+    if (bootkick_wake_initial_release_countdown == 0U) {
+      bootkick_start_wake_pulse(bootkick_wake_trigger_stage);
+    }
+  } else if (bootkick_wake_waiting_for_som_off) {
     boot_state = BOOT_STANDBY;
     const bootkick_deferred_wake_action deferred_action = bootkick_deferred_wake_step(
       recent_heartbeat, current_board->read_som_gpio(), &bootkick_wake_som_off_countdown);
@@ -350,6 +363,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
                                   bootkick_wake_reset_attempted, current_board->read_som_gpio(),
                                   false, bootkick_wake_trigger_stage, 0x3EU, wake_debug.reset_reason);
         wake_debug_stage(0x3EU);
+        wake_monitor_attempt_failed();
         bootkick_clear_wake_confirmation();
       }
     }

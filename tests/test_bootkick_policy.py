@@ -28,8 +28,9 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, true, false, false));
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, false, true));
 
-      // One valid CAN frame after the shutdown settle window is sufficient;
-      // hardwared already required every physical bus to be quiet for 300 s.
+      // A confirmed rate transition after the shutdown guard is sufficient.
+      // Sleeping-vehicle CAN remains present, so no pre-shutdown quiet period
+      // may be assumed here.
       assert(bootkick_can_activity_ready(true, true, true, true, false));
       assert(!bootkick_can_activity_ready(false, true, true, true, false));
       assert(!bootkick_can_activity_ready(true, false, true, true, false));
