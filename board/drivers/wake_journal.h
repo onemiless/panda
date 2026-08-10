@@ -50,6 +50,17 @@ static void wake_journal_begin_cycle(void) {
   wake_journal_cycle_source = 0U;
 }
 
+static void wake_journal_abort_cycle(void) {
+  wake_journal_pending_commit_valid = false;
+  wake_journal_pending_armed_valid = false;
+  wake_journal_pending_event_valid = false;
+  wake_journal_pending_result_valid = false;
+  wake_journal_cycle_active = false;
+  wake_journal_event_queued = false;
+  wake_journal_result_queued = false;
+  wake_journal_cycle_source = 0U;
+}
+
 static void wake_journal_queue_checkpoint(uint8_t state, uint8_t stage,
                                           uint32_t transaction, uint32_t host_session,
                                           uint32_t off_seconds) {

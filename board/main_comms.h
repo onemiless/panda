@@ -177,6 +177,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
         wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
         wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        set_safety_mode(SAFETY_SILENT, 0U);
         current_board->set_bootkick(BOOT_STANDBY);
         wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
         wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
@@ -188,6 +189,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case PANDA_REQUEST_ABORT_WAKE_MONITOR: {
       const uint32_t transaction = wake_monitor_request_transaction(req);
       if ((transaction != 0U) && (transaction == wake_monitor_status.transaction)) {
+        wake_journal_abort_cycle();
         wake_monitor_reset_runtime();
         wake_monitor_enabled = false;
         wake_monitor_committed = false;

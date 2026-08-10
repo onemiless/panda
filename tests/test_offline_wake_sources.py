@@ -216,3 +216,9 @@ def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():
 
   assert "wake_monitor_enabled && wake_monitor_committed" in setter
   assert "SAFETY_SILENT" in setter
+
+  comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
+  assert "set_safety_mode(SAFETY_SILENT, 0U);" in commit_case
+  abort_case = comms.split("case PANDA_REQUEST_ABORT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
+  assert "wake_journal_abort_cycle();" in abort_case
