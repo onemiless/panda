@@ -45,6 +45,10 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
   wake_monitor_status.trigger_stage = 0U;
   wake_can_trace_reset();
   wake_journal_begin_cycle();
+  if (committed) {
+    wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
+                                  transaction, wake_monitor_status.host_session, 0U);
+  }
   wake_debug_clear_success();
   set_safety_mode(SAFETY_SILENT, 0U);
   set_power_save_state(false);
@@ -175,6 +179,8 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
         current_board->set_bootkick(BOOT_STANDBY);
         wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
+        wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
+                                      transaction, wake_monitor_status.host_session, 0U);
       }
       break;
     }

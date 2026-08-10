@@ -146,7 +146,11 @@ static void tick_handler(void) {
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
   static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {
+    OFFLINE_WAKE_CAN_BASELINE_UNSET,
+    OFFLINE_WAKE_CAN_BASELINE_UNSET,
+    OFFLINE_WAKE_CAN_BASELINE_UNSET,
+  };
   static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint8_t wake_monitor_led_phase = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
@@ -221,11 +225,6 @@ static void tick_handler(void) {
         rx_per_bus[i] = can_health[i].total_rx_cnt - wake_monitor_prev_rx[i];
         wake_monitor_prev_rx[i] = can_health[i].total_rx_cnt;
       }
-      if (wake_monitor_enabled && recent_heartbeat && !wake_monitor_som_off_seen) {
-        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-          wake_monitor_can_baseline[i] = rx_per_bus[i];
-        }
-      }
       if (wake_monitor_enabled && wake_monitor_committed) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
@@ -233,6 +232,10 @@ static void tick_handler(void) {
             wake_monitor_som_off_seen = true;
             wake_monitor_can_activity_pending = false;
             wake_monitor_can_led_countdown = 0U;
+            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+              wake_monitor_can_baseline[i] = offline_wake_can_sleep_baseline_step(
+                OFFLINE_WAKE_CAN_BASELINE_UNSET, rx_per_bus[i]);
+            }
             const offline_wake_heartbeat_loss_policy policy =
               offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES);
             if (policy.keep_can_active) {
@@ -244,9 +247,9 @@ static void tick_handler(void) {
               // counters/detectors while offline so the restarted host never
               // fingerprints against stale pre-shutdown traffic.
               can_clear(&can_rx_q);
-              // Freeze the live-traffic baseline. Tesla can continue emitting
-              // sleeping traffic, so the guard must not learn a real wake burst
-              // into the baseline before dispatch is permitted.
+              // Learn the vehicle's post-shutdown background traffic during the
+              // guard. Host-alive traffic is much higher and can hide a later
+              // door wake if it is frozen as the comparison baseline.
               wake_debug_stage(0x39U);
             } else {
               wake_monitor_som_off_ready = true;
@@ -259,6 +262,10 @@ static void tick_handler(void) {
               set_power_save_state(policy.request_power_save);
             }
           } else if (!wake_monitor_som_off_ready) {
+            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+              wake_monitor_can_baseline[i] = offline_wake_can_sleep_baseline_step(
+                wake_monitor_can_baseline[i], rx_per_bus[i]);
+            }
             if (wake_monitor_som_off_countdown > 0U) {
               wake_monitor_som_off_countdown -= 1U;
             }
@@ -268,6 +275,10 @@ static void tick_handler(void) {
               offline_wake_raw_can_exti_arm();
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
               wake_debug_stage(0x3FU);
+              wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_ARMED, 0x3FU,
+                                            wake_monitor_status.transaction,
+                                            wake_monitor_status.committed_host_session,
+                                            wake_monitor_off_seconds);
             }
           } else {
           }
@@ -277,6 +288,7 @@ static void tick_handler(void) {
 
       bool can_rate_candidate = false;
       if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
+          wake_monitor_som_off_ready && wake_monitor_can_armed &&
           (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {
         wake_can_trace_capture_rates(rx_per_bus);
         for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {

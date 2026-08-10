@@ -53,9 +53,23 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, true, 1UL << 8, raw_lines));
       assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, false, 1UL << 12, raw_lines));
 
+      uint32_t sleep_baseline = OFFLINE_WAKE_CAN_BASELINE_UNSET;
+      sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 600U);
+      sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 120U);
+      sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 100U);
+      sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 110U);
+      assert(sleep_baseline == 100U);
+
+      assert(!offline_wake_can_rate_increase(1U, OFFLINE_WAKE_CAN_BASELINE_UNSET));
       assert(!offline_wake_can_rate_increase(1U, 0U));
       assert(!offline_wake_can_rate_increase(100U, 100U));
       assert(!offline_wake_can_rate_increase(140U, 100U));
+      // This is the captured failure shape: host traffic was ~600 frames/s,
+      // sleep settled near 100 frames/s, and the door burst reached 190.
+      // Comparing against the live-host baseline misses it; the learned sleep
+      // baseline must accept it without accepting normal +/-40 jitter.
+      assert(!offline_wake_can_rate_increase(190U, 600U));
+      assert(offline_wake_can_rate_increase(190U, sleep_baseline));
       assert(offline_wake_can_rate_increase(250U, 100U));
       assert(offline_wake_can_rate_increase(50U, 0U));
 
@@ -177,3 +191,18 @@ def test_background_can_requires_a_sustained_rate_increase_to_request_wake():
   assert "bootkick_can_activity_ready(" in main_source
   assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" in policy_source
   assert "wake_monitor_can_wake_requested = true;" in main_source
+  rate_detector = main_source.split("bool can_rate_candidate = false;", 1)[1].split(
+    "if (bootkick_tesla_event_ready(", 1
+  )[0]
+  assert "wake_monitor_som_off_ready && wake_monitor_can_armed" in rate_detector
+
+
+def test_shutdown_guard_learns_sleep_baseline_instead_of_freezing_live_traffic():
+  source = (PANDA_ROOT / "board/main.c").read_text()
+  heartbeat_transition = source.split("if (wake_monitor_enabled && wake_monitor_committed) {", 1)[1].split(
+    "if (bootkick_tesla_event_ready(", 1
+  )[0]
+
+  assert "OFFLINE_WAKE_CAN_BASELINE_UNSET" in heartbeat_transition
+  assert "offline_wake_can_sleep_baseline_step(" in heartbeat_transition
+  assert "wake_monitor_can_baseline[i] = rx_per_bus[i];" not in heartbeat_transition

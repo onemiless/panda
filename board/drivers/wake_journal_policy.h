@@ -97,6 +97,25 @@ static inline void wake_journal_build_result(wake_journal_record_t *record,
   wake_journal_finish_record(record);
 }
 
+static inline void wake_journal_build_checkpoint(wake_journal_record_t *record,
+                                                 uint32_t sequence, uint32_t cycle,
+                                                 uint8_t state, uint8_t stage,
+                                                 uint32_t transaction, uint32_t host_session,
+                                                 uint32_t off_seconds) {
+  const uint16_t auxiliary = (uint16_t)state | ((uint16_t)stage << 8U);
+  *record = (wake_journal_record_t){
+    .magic = WAKE_JOURNAL_MAGIC,
+    .sequence = sequence,
+    .cycle = cycle,
+    .meta = wake_journal_meta(WAKE_JOURNAL_RECORD_CHECKPOINT, 0U, auxiliary),
+    .value0 = transaction,
+    .value1 = host_session,
+    .value2 = off_seconds,
+    .crc32 = 0U,
+  };
+  wake_journal_finish_record(record);
+}
+
 static inline wake_journal_info_t wake_journal_scan(const wake_journal_record_t *records,
                                                     uint16_t capacity) {
   wake_journal_info_t info = {

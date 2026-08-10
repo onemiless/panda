@@ -1,6 +1,10 @@
 import binascii
+from pathlib import Path
 
 from panda import Panda
+
+
+PANDA_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeHandle:
@@ -88,3 +92,51 @@ def test_wake_journal_decodes_result_and_rejects_bad_crc():
   assert record["trigger_stage"] == 0x34
   assert record["final_stage"] == 0x41
   assert record["reset_reason"] == 0x1234
+
+
+def test_wake_journal_decodes_shutdown_checkpoint():
+  info_payload = bytes(Panda.WAKE_JOURNAL_INFO_STRUCT.size)
+  auxiliary = 4 | (0x3F << 8)
+  meta = Panda.WAKE_JOURNAL_VERSION | (3 << 8) | (auxiliary << 16)
+  prefix = Panda.WAKE_JOURNAL_RECORD_STRUCT.pack(
+    Panda.WAKE_JOURNAL_MAGIC, 21, 20, meta, 0x12345678, 0x87654321, 45, 0,
+  )[:28]
+  record_payload = prefix + (binascii.crc32(prefix) & 0xFFFFFFFF).to_bytes(4, "little")
+  panda = object.__new__(Panda)
+  panda._handle = FakeHandle(info_payload, record_payload)
+
+  assert panda.wake_journal_record(7) == {
+    "valid": True,
+    "magic": Panda.WAKE_JOURNAL_MAGIC,
+    "version": 1,
+    "type": "checkpoint",
+    "source": "unknown",
+    "sequence": 21,
+    "cycle": 20,
+    "state": 4,
+    "stage": 0x3F,
+    "transaction": 0x12345678,
+    "host_session": 0x87654321,
+    "off_seconds": 45,
+  }
+
+
+def test_wake_journal_uses_atomic_h7_flashword_and_persists_phases():
+  journal = (PANDA_ROOT / "board/drivers/wake_journal.h").read_text()
+  llflash = (PANDA_ROOT / "board/stm32h7/llflash.h").read_text()
+  comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  main = (PANDA_ROOT / "board/main.c").read_text()
+
+  assert "#define WAKE_JOURNAL_FLASH_WRITES_ENABLED true" in journal
+  assert "flash_write_flashword(destination, words)" in journal
+  assert "wake_journal_queue_checkpoint(" in comms
+  assert "WAKE_MONITOR_STATE_COMMITTED" in comms
+  assert "wake_journal_queue_checkpoint(" in main
+  assert "WAKE_MONITOR_STATE_ARMED" in main
+
+  writer = llflash.split("bool flash_write_flashword(", 1)[1].split("void flush_write_buffer", 1)[0]
+  assert "FLASH->CR1 |= FLASH_CR_PG;" in writer
+  assert "for (uint8_t i = 0U; i < 8U; i++)" in writer
+  assert writer.index("FLASH->CR1 |= FLASH_CR_PG;") < writer.index("for (uint8_t i = 0U; i < 8U; i++)")
+  assert writer.index("for (uint8_t i = 0U; i < 8U; i++)") < writer.rindex("while (FLASH->SR1 & FLASH_SR_QW)")
+  assert "FLASH_CR_FW" not in writer

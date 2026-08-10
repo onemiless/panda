@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from panda import Panda
+
+
+PANDA_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeHandle:
@@ -45,3 +50,14 @@ def test_wake_packet_layouts_come_from_shared_header():
   assert Panda.WAKE_CAN_TRACE_STRUCT.size == 24
   assert Panda.WAKE_MONITOR_STATUS_STRUCT.size == 20
   assert Panda.WAKE_MONITOR_STATUS_MAGIC == 0x574D4F4E
+
+
+def test_reset_reason_is_snapshotted_then_hardware_flags_are_cleared():
+  source = (PANDA_ROOT / "board/drivers/wake_debug.h").read_text()
+  init = source.split("static void wake_debug_init(void) {", 1)[1].split("wake_success_load();", 1)[0]
+
+  snapshot = "wake_debug.reset_reason = RCC->RSR;"
+  clear = "RCC->RSR = RCC_RSR_RMVF;"
+  assert snapshot in init
+  assert clear in init
+  assert init.index(snapshot) < init.index(clear) < init.index("wake_debug_save();")

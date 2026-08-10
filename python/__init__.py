@@ -781,7 +781,7 @@ class Panda:
       "valid": valid,
       "magic": a[0],
       "version": version,
-      "type": {1: "event", 2: "result"}.get(record_type, "unknown"),
+      "type": {1: "event", 2: "result", 3: "checkpoint"}.get(record_type, "unknown"),
       "source": source,
       "sequence": a[1],
       "cycle": a[2],
@@ -808,6 +808,14 @@ class Panda:
         "trigger_stage": a[4],
         "final_stage": a[5],
         "reset_reason": a[6],
+      })
+    elif record_type == 3:
+      record.update({
+        "state": auxiliary & 0xFF,
+        "stage": (auxiliary >> 8) & 0xFF,
+        "transaction": a[4],
+        "host_session": a[5],
+        "off_seconds": a[6],
       })
     return record
 

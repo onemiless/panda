@@ -27,6 +27,17 @@ def test_append_only_wake_journal_policy(tmp_path):
       assert(info.next_sequence == 0U);
       assert(info.flags == 0U);
 
+      wake_journal_record_t checkpoint;
+      wake_journal_build_checkpoint(&checkpoint, 8U, 8U, WAKE_MONITOR_STATE_ARMED,
+                                    0x3FU, 0x12345678U, 0x87654321U, 45U);
+      assert(wake_journal_record_valid(&checkpoint));
+      assert(((checkpoint.meta >> 8U) & 0xFU) == WAKE_JOURNAL_RECORD_CHECKPOINT);
+      assert(((checkpoint.meta >> 16U) & 0xFFU) == WAKE_MONITOR_STATE_ARMED);
+      assert(((checkpoint.meta >> 24U) & 0xFFU) == 0x3FU);
+      assert(checkpoint.value0 == 0x12345678U);
+      assert(checkpoint.value1 == 0x87654321U);
+      assert(checkpoint.value2 == 45U);
+
       const uint8_t door[8] = {0U, 0U, 1U, 2U, 3U, 4U, 5U, 6U};
       wake_journal_build_event(&slots[0], 10U, 10U, WAKE_JOURNAL_SOURCE_TESLA_DOOR,
                                0x34U, 1U, 1U, 8U, 0x102U, door);

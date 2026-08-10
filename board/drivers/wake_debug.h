@@ -103,6 +103,10 @@ static void wake_debug_init(void) {
   }
   wake_debug.boot_count += 1U;
   wake_debug.reset_reason = RCC->RSR;
+  // Reset flags are sticky across boots. Preserve this boot's snapshot in the
+  // backup record, then clear the hardware flags so the next boot reports only
+  // its actual reset source instead of an accumulated history.
+  RCC->RSR = RCC_RSR_RMVF;
   wake_debug_save();
 
   wake_success_load();

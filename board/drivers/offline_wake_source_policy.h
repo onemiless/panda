@@ -10,6 +10,7 @@
 #define OFFLINE_WAKE_CUATRO_FDCAN3_EXTI_LINE (1UL << 12)
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
 #define WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S 2U
+#define OFFLINE_WAKE_CAN_BASELINE_UNSET UINT32_MAX
 
 typedef struct {
   bool keep_can_active;
@@ -68,9 +69,20 @@ static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bo
          ((pending_lines & armed_lines) != 0U);
 }
 
+static inline uint32_t offline_wake_can_sleep_baseline_step(uint32_t baseline_rate, uint32_t current_rate) {
+  return (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) || (current_rate < baseline_rate) ?
+         current_rate : baseline_rate;
+}
+
 static inline bool offline_wake_can_rate_increase(uint32_t current_rate, uint32_t baseline_rate) {
+  if (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) {
+    return false;
+  }
   const uint32_t delta = (current_rate > baseline_rate) ? (current_rate - baseline_rate) : 0U;
-  return (delta >= WAKE_MONITOR_CAN_RATE_DELTA) && (delta >= baseline_rate);
+  // Tesla keeps low-rate background CAN traffic after the vehicle goes to
+  // sleep. A real door/vehicle wake is a sustained rise above that sleeping
+  // traffic, not necessarily a doubling of the host-alive traffic rate.
+  return (delta >= WAKE_MONITOR_CAN_RATE_DELTA) && (delta >= (baseline_rate / 2U));
 }
 
 static inline bool offline_wake_can_rate_confirm_step(bool candidate, volatile uint8_t *confirmation) {
