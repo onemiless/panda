@@ -206,3 +206,13 @@ def test_shutdown_guard_learns_sleep_baseline_instead_of_freezing_live_traffic()
   assert "OFFLINE_WAKE_CAN_BASELINE_UNSET" in heartbeat_transition
   assert "offline_wake_can_sleep_baseline_step(" in heartbeat_transition
   assert "wake_monitor_can_baseline[i] = rx_per_bus[i];" not in heartbeat_transition
+
+
+def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():
+  source = (PANDA_ROOT / "board/main.c").read_text()
+  setter = source.split("void set_safety_mode(uint16_t mode, uint16_t param) {", 1)[1].split(
+    "bool is_car_safety_mode", 1
+  )[0]
+
+  assert "wake_monitor_enabled && wake_monitor_committed" in setter
+  assert "SAFETY_SILENT" in setter

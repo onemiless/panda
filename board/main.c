@@ -40,7 +40,10 @@ void debug_ring_callback(uart_ring *ring) {
 
 // this is the only way to leave silent mode
 void set_safety_mode(uint16_t mode, uint16_t param) {
-  uint16_t mode_copy = mode;
+  // COMMIT transfers shutdown ownership to Panda. Ignore late pandad safety
+  // requests until the transaction is aborted or a returning heartbeat is
+  // confirmed; offline monitoring must remain receive-only.
+  uint16_t mode_copy = (wake_monitor_enabled && wake_monitor_committed) ? SAFETY_SILENT : mode;
   int err = set_safety_hooks(mode_copy, param);
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
