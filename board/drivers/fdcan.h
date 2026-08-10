@@ -271,24 +271,32 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    // Always learn current Tesla state, including during the post-shutdown
-    // guard. Only a new semantic edge after ARMED may wake the SoM; this keeps
-    // the driver's exit traffic from being replayed after the settle period.
+    if (wake_monitor_enabled && !wake_monitor_committed &&
+        (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)) {
+      // Any vehicle traffic after PREPARE invalidates the host's quiet
+      // snapshot. COMMIT must refuse this transaction instead of silently
+      // arming from a stale 300-second gate.
+      wake_monitor_prepare_dirty = true;
+      wake_monitor_status.reserved |= WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
+    }
+
+    // Keep semantic decoding for diagnostics, but after a clean COMMIT any
+    // hardware-validated frame from a physical CAN controller is sufficient.
+    // The host already proved a long all-bus quiet period.
     const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
-    // Two independent sleep/wake captures show physical bus 1 is the first
-    // vehicle bus to resume. After the shutdown guard has observed a quiet
-    // bus and armed the monitor, preserve its first decoded frame and wake
-    // without waiting for the other controllers to cross a rate threshold.
-    if (offline_wake_primary_bus_rx_ready(
-          wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
-          wake_monitor_can_wake_requested, can_number, CAN_NUM_FROM_BUS_NUM(1U))) {
+    if (offline_wake_physical_bus_rx_ready(
+          wake_monitor_enabled, wake_monitor_committed, wake_monitor_can_armed,
+          wake_monitor_can_wake_requested, can_number)) {
+      const bool first_activity = !wake_monitor_can_activity_pending;
+      wake_monitor_can_activity_pending = true;
+      if (first_activity) {
       wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
                                GET_LEN(&to_push), to_push.addr, to_push.data);
-      wake_monitor_can_activity_pending = true;
+      }
     }
-    if (!wake_monitor_can_activity_pending && bootkick_tesla_event_should_latch(
+    if (bootkick_tesla_event_should_latch(
           wake_monitor_enabled,
-          wake_monitor_som_off_ready,
+          wake_monitor_committed,
           wake_monitor_can_armed,
           (tesla_source != TESLA_WAKE_SOURCE_NONE) && (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED),
           wake_monitor_can_wake_requested)) {
@@ -312,7 +320,7 @@ void can_rx(uint8_t can_number) {
 
     bool queue_for_host = true;
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    queue_for_host = !wake_monitor_enabled || !wake_monitor_som_off_seen;
+    queue_for_host = !wake_monitor_enabled || !wake_monitor_committed;
     #endif
     if (queue_for_host) {
       led_set(LED_BLUE, true);

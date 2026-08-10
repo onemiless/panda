@@ -62,8 +62,8 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       // A completed failure is terminal and must not be retried forever.
       assert(!bootkick_wake_request_needs_dispatch(true, true, true, false, false, false, 0U, 0x3EU));
 
-      // Frames observed during the shutdown guard only teach the current
-      // vehicle state. A new semantic edge may latch only after CAN arming.
+      // COMMIT arms event capture immediately. SoM readiness only controls
+      // BOOTKICK dispatch and must not suppress event latching.
       assert(!bootkick_tesla_event_ready(true, true, false, true, false));
       assert(bootkick_tesla_event_ready(true, true, true, true, false));
       assert(!bootkick_tesla_event_ready(true, true, true, false, false));
@@ -154,16 +154,23 @@ def test_prestop_ignition_wake_waits_for_som_power_off(tmp_path):
       assert(!bootkick_restore_waits_for_som_off(0x34U, 0U));
 
       uint8_t off_confirm = BOOTKICK_SOM_OFF_CONFIRM_S;
-      assert(bootkick_deferred_wake_step(false, true, &off_confirm) == BOOTKICK_DEFERRED_WAIT);
+      uint8_t heartbeat_absent = BOOTKICK_SOM_OFF_FALLBACK_S;
+      assert(bootkick_deferred_wake_step(false, true, &off_confirm, &heartbeat_absent) == BOOTKICK_DEFERRED_WAIT);
       assert(off_confirm == BOOTKICK_SOM_OFF_CONFIRM_S);
 
-      assert(bootkick_deferred_wake_step(false, false, &off_confirm) == BOOTKICK_DEFERRED_WAIT);
+      assert(bootkick_deferred_wake_step(false, false, &off_confirm, &heartbeat_absent) == BOOTKICK_DEFERRED_WAIT);
       assert(off_confirm == 1U);
-      assert(bootkick_deferred_wake_step(false, false, &off_confirm) == BOOTKICK_DEFERRED_START);
+      assert(bootkick_deferred_wake_step(false, false, &off_confirm, &heartbeat_absent) == BOOTKICK_DEFERRED_START);
       assert(off_confirm == 0U);
 
       off_confirm = BOOTKICK_SOM_OFF_CONFIRM_S;
-      assert(bootkick_deferred_wake_step(true, true, &off_confirm) == BOOTKICK_DEFERRED_ALREADY_ALIVE);
+      heartbeat_absent = 1U;
+      assert(bootkick_deferred_wake_step(true, true, &off_confirm, &heartbeat_absent) == BOOTKICK_DEFERRED_ALREADY_ALIVE);
+      assert(heartbeat_absent == BOOTKICK_SOM_OFF_FALLBACK_S);
+
+      off_confirm = BOOTKICK_SOM_OFF_CONFIRM_S;
+      heartbeat_absent = 1U;
+      assert(bootkick_deferred_wake_step(false, true, &off_confirm, &heartbeat_absent) == BOOTKICK_DEFERRED_START);
       return 0;
     }
     """
@@ -193,3 +200,15 @@ def test_tres_unanswered_wake_resets_then_generates_fresh_edge():
   assert "bootkick_heartbeat_confirms_wake" in heartbeat_path
   assert "wake_debug_latch_success(bootkick_wake_trigger_stage);" in heartbeat_path
   assert "bootkick_clear_wake_confirmation();" in heartbeat_path
+
+
+def test_single_uart_byte_cannot_permanently_block_tres_reset():
+  source = (PANDA_ROOT / "board/drivers/bootkick.h").read_text()
+
+  assert "BOOTKICK_UART_PROGRESS_TIMEOUT_S" in source
+  assert "bootkick_wake_uart_progress_countdown -= 1U;" in source
+  assert "const bool uart_progress_active = bootkick_wake_uart_progress_countdown > 0U;" in source
+  reset_recovery = source.split("if (bootkick_wake_confirmation_pending && !bootkick_wake_waiting_for_som_off", 2)[2]
+  reset_recovery = reset_recovery.split("if (bootkick_reset_pulse_requested", 1)[0]
+  assert "bootkick_wake_uart_progress_countdown == 0U" in reset_recovery
+  assert "!bootkick_wake_uart_seen" not in reset_recovery

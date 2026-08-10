@@ -115,7 +115,7 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
-#define WAKE_MONITOR_SOM_OFF_SETTLE_S 45U
+#define WAKE_MONITOR_SOM_OFF_SETTLE_S 30U
 #define WAKE_MONITOR_CAN_LED_HOLD_S 5U
 #define WAKE_MONITOR_FAILURE_COOLDOWN_S 10U
 
@@ -147,21 +147,9 @@ static void tick_handler(void) {
   static uint8_t prev_harness_status = HARNESS_STATUS_NC;
   static uint8_t loop_counter = 0U;
   static bool relay_malfunction_prev = false;
-  static uint32_t wake_monitor_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint32_t wake_monitor_can_baseline[PANDA_CAN_CNT] = {
-    OFFLINE_WAKE_CAN_BASELINE_UNSET,
-    OFFLINE_WAKE_CAN_BASELINE_UNSET,
-    OFFLINE_WAKE_CAN_BASELINE_UNSET,
-  };
-  static uint32_t wake_monitor_fast_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint32_t wake_monitor_fast_prev_bucket[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint32_t wake_monitor_fast_rx_window[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint32_t wake_monitor_fast_rx_rate[PANDA_CAN_CNT] = {0U, 0U, 0U};
-  static uint8_t wake_monitor_fast_sample_count = 0U;
   static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint8_t wake_monitor_led_phase = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
-  static uint8_t wake_monitor_primary_bus_quiet_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -228,37 +216,23 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
-      uint32_t rx_per_bus[PANDA_CAN_CNT] = {0U, 0U, 0U};
-      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-        rx_per_bus[i] = can_health[i].total_rx_cnt - wake_monitor_prev_rx[i];
-        wake_monitor_prev_rx[i] = can_health[i].total_rx_cnt;
-      }
       if (wake_monitor_enabled && wake_monitor_committed) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
-            wake_monitor_primary_bus_quiet_seconds = 0U;
             wake_monitor_som_off_seen = true;
-            wake_monitor_can_activity_pending = false;
             wake_monitor_can_led_countdown = 0U;
-            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-              wake_monitor_can_baseline[i] = offline_wake_can_sleep_baseline_step(
-                OFFLINE_WAKE_CAN_BASELINE_UNSET, rx_per_bus[i]);
-            }
             const offline_wake_heartbeat_loss_policy policy =
               offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES);
             if (policy.keep_can_active) {
               wake_monitor_som_off_ready = false;
               wake_monitor_som_off_countdown = WAKE_MONITOR_SOM_OFF_SETTLE_S;
-              wake_monitor_can_armed = false;
+              wake_monitor_som_off_low_seconds = 0U;
               wake_monitor_status.state = WAKE_MONITOR_STATE_GUARD;
               // pandad is gone and can no longer drain this queue. Keep only
               // counters/detectors while offline so the restarted host never
               // fingerprints against stale pre-shutdown traffic.
               can_clear(&can_rx_q);
-              // Learn the vehicle's post-shutdown background traffic during the
-              // guard. Host-alive traffic is much higher and can hide a later
-              // door wake if it is frozen as the comparison baseline.
               wake_debug_stage(0x39U);
             } else {
               wake_monitor_som_off_ready = true;
@@ -271,32 +245,20 @@ static void tick_handler(void) {
               set_power_save_state(policy.request_power_save);
             }
           } else if (!wake_monitor_som_off_ready) {
-            for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-              wake_monitor_can_baseline[i] = offline_wake_can_sleep_baseline_step(
-                wake_monitor_can_baseline[i], rx_per_bus[i]);
+            if (current_board->read_som_gpio()) {
+              wake_monitor_som_off_low_seconds = 0U;
+            } else if (wake_monitor_som_off_low_seconds < BOOTKICK_SOM_OFF_CONFIRM_S) {
+              wake_monitor_som_off_low_seconds += 1U;
             }
-            wake_monitor_primary_bus_quiet_seconds = offline_wake_primary_bus_quiet_step(
-              wake_monitor_primary_bus_quiet_seconds, rx_per_bus[CAN_NUM_FROM_BUS_NUM(1U)]);
             if (wake_monitor_som_off_countdown > 0U) {
               wake_monitor_som_off_countdown -= 1U;
             }
-            if (offline_wake_primary_bus_guard_ready(
-                  wake_monitor_som_off_countdown, wake_monitor_primary_bus_quiet_seconds)) {
-              // The guard learned the driver's exit traffic and sleeping CAN
-              // baseline. Start post-arm semantic and burst detection cleanly.
-              wake_monitor_tesla_event_pending = false;
-              wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
-              wake_monitor_can_activity_pending = false;
-              wake_monitor_fast_sample_count = 0U;
-              for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-                wake_monitor_fast_prev_rx[i] = can_health[i].total_rx_cnt;
-                wake_monitor_fast_prev_bucket[i] = 0U;
-                wake_monitor_fast_rx_window[i] = 0U;
-                wake_monitor_fast_rx_rate[i] = 0U;
-              }
+            if ((wake_monitor_som_off_low_seconds >= BOOTKICK_SOM_OFF_CONFIRM_S) ||
+                (wake_monitor_som_off_countdown == 0U)) {
+              // CAN has been armed since COMMIT. This transition only decides
+              // when BOOTKICK may be dispatched; it must never clear an event
+              // that arrived while Linux was still powering down.
               wake_monitor_som_off_ready = true;
-              wake_monitor_can_armed = true;
-              offline_wake_raw_can_exti_arm();
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
               wake_debug_stage(0x3FU);
               wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_ARMED, 0x3FU,
@@ -308,6 +270,20 @@ static void tick_handler(void) {
           }
         } else {
         }
+      }
+
+      if (wake_monitor_enabled && wake_monitor_committed && (faults != 0U) &&
+          !wake_monitor_can_wake_requested && !wake_monitor_panda_fault_pending) {
+        wake_monitor_panda_fault_pending = true;
+        wake_monitor_can_activity_pending = true;
+        wake_monitor_status.reserved &= (uint8_t)(~WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY);
+        const uint8_t fault_data[8] = {
+          (uint8_t)(faults & 0xFFU), (uint8_t)((faults >> 8U) & 0xFFU),
+          (uint8_t)((faults >> 16U) & 0xFFU), (uint8_t)((faults >> 24U) & 0xFFU),
+          fault_status, 0U, 0U, 0U,
+        };
+        wake_journal_queue_event(WAKE_JOURNAL_SOURCE_PANDA_FAULT, 0x35U, 3U, 3U,
+                                 5U, 0U, fault_data);
       }
 
       if (bootkick_tesla_event_ready(
@@ -347,14 +323,6 @@ static void tick_handler(void) {
         wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
         wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
         wake_monitor_status.trigger_stage = 0x35U;
-        uint8_t burst_data[8] = {0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
-        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-          const uint16_t rate = (uint16_t)MIN(wake_monitor_fast_rx_rate[i], (uint32_t)UINT16_MAX);
-          burst_data[i * 2U] = (uint8_t)(rate & 0xFFU);
-          burst_data[(i * 2U) + 1U] = (uint8_t)(rate >> 8U);
-        }
-        wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_RATE, 0x35U, 3U, 3U,
-                                 6U, wake_debug.can_exti_line, burst_data);
         wake_debug_stage(0x43U);
         if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
           wake_monitor_can_dispatch_pending = false;
@@ -370,7 +338,6 @@ static void tick_handler(void) {
         if (wake_monitor_failure_cooldown_step(&wake_monitor_failure_cooldown)) {
           wake_monitor_can_armed = true;
           wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
-          offline_wake_raw_can_exti_arm();
           wake_debug_stage(0x3FU);
         }
       }
@@ -447,11 +414,6 @@ static void tick_handler(void) {
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
-        // ARMED temporarily changes the oriented FDCAN2 RX pin to plain GPIO
-        // for raw bus-1 edge detection. Restore the normal pin mux and CAN
-        // controller before the returning host resumes pandad traffic.
-        current_board->set_can_mode(CAN_MODE_NORMAL);
-        can_init_all();
         enable_can_transceivers(true);
         if (heartbeat_result == WAKE_MONITOR_HEARTBEAT_CONFIRMED) {
           // Recovery stages describe progress, not the original wake source.
@@ -567,44 +529,6 @@ static void tick_handler(void) {
 
       // synchronous safety check
       safety_tick(&current_safety_config);
-    }
-
-    // Retain the learned-rate detector as a secondary fallback for captures
-    // where another bus becomes active first. Physical bus 1 is handled at
-    // the decoded-frame boundary in fdcan.h and does not depend on this path.
-    if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
-        wake_monitor_som_off_ready && wake_monitor_can_armed &&
-        (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {
-      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-        const uint32_t current_total = can_health[i].total_rx_cnt;
-        const uint32_t current_bucket = current_total - wake_monitor_fast_prev_rx[i];
-        wake_monitor_fast_prev_rx[i] = current_total;
-        wake_monitor_fast_rx_window[i] = current_bucket + wake_monitor_fast_prev_bucket[i];
-        wake_monitor_fast_prev_bucket[i] = current_bucket;
-        wake_monitor_fast_rx_rate[i] = offline_wake_can_window_rate(wake_monitor_fast_rx_window[i]);
-      }
-      if (wake_monitor_fast_sample_count < WAKE_MONITOR_CAN_BURST_WINDOW_TICKS) {
-        wake_monitor_fast_sample_count += 1U;
-      }
-      if ((wake_monitor_fast_sample_count >= WAKE_MONITOR_CAN_BURST_WINDOW_TICKS) &&
-          offline_wake_multibus_burst_ready(wake_monitor_fast_rx_window, wake_monitor_can_baseline,
-                                            CAN_NUM_FROM_BUS_NUM(0U))) {
-        wake_monitor_can_activity_pending = true;
-        wake_can_trace_capture_rates(wake_monitor_fast_rx_rate);
-      }
-      if (wake_monitor_raw_can_edge_pending) {
-        // Re-arm only after decoded counters were sampled; raw electrical edges
-        // remain hints and never bypass the multi-bus/semantic checks.
-        offline_wake_raw_can_exti_arm();
-      }
-    } else {
-      wake_monitor_fast_sample_count = 0U;
-      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-        wake_monitor_fast_prev_rx[i] = can_health[i].total_rx_cnt;
-        wake_monitor_fast_prev_bucket[i] = 0U;
-        wake_monitor_fast_rx_window[i] = 0U;
-        wake_monitor_fast_rx_rate[i] = 0U;
-      }
     }
 
     if (wake_monitor_enabled && wake_monitor_som_off_seen) {

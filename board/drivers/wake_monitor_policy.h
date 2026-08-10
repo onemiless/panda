@@ -8,6 +8,7 @@
 typedef enum {
   WAKE_MONITOR_PREPARE_INVALID,
   WAKE_MONITOR_PREPARE_IDEMPOTENT,
+  WAKE_MONITOR_PREPARE_CONFLICT,
   WAKE_MONITOR_PREPARE_START,
 } wake_monitor_prepare_action_t;
 
@@ -26,13 +27,17 @@ static inline wake_monitor_prepare_action_t wake_monitor_prepare_action(uint8_t 
   if ((state == WAKE_MONITOR_STATE_PREPARED) && (current_transaction == requested_transaction)) {
     return WAKE_MONITOR_PREPARE_IDEMPOTENT;
   }
+  if (state != WAKE_MONITOR_STATE_IDLE) {
+    return WAKE_MONITOR_PREPARE_CONFLICT;
+  }
   return WAKE_MONITOR_PREPARE_START;
 }
 
 static inline bool wake_monitor_commit_allowed(uint8_t state, uint32_t current_transaction,
-                                               uint32_t requested_transaction) {
+                                               uint32_t requested_transaction, bool prepare_dirty,
+                                               bool can_healthy) {
   return (state == WAKE_MONITOR_STATE_PREPARED) && (requested_transaction != 0U) &&
-         (current_transaction == requested_transaction);
+         (current_transaction == requested_transaction) && !prepare_dirty && can_healthy;
 }
 
 static inline wake_monitor_heartbeat_result_t wake_monitor_heartbeat_result(bool committed,

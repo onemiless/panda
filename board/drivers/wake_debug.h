@@ -125,10 +125,6 @@ static void wake_debug_init(void) {
   }
 }
 
-static uint16_t wake_can_trace_sat_u16(uint32_t value) {
-  return (uint16_t)MIN(value, (uint32_t)UINT16_MAX);
-}
-
 static void wake_can_trace_clear_peak(void) {
   wake_can_trace.peak_rx_bus0 = 0U;
   wake_can_trace.peak_rx_bus1 = 0U;
@@ -155,20 +151,6 @@ static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {
 static void wake_can_trace_set_source(uint8_t source) {
   wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | ((uint32_t)source << 24U);
   wake_can_trace_save();
-}
-
-static void wake_can_trace_capture_rates(const uint32_t *rx_per_bus) {
-  const uint16_t bus0 = wake_can_trace_sat_u16(rx_per_bus[0]);
-  const uint16_t bus1 = wake_can_trace_sat_u16(rx_per_bus[1]);
-  const uint16_t bus2 = wake_can_trace_sat_u16(rx_per_bus[2]);
-  if ((bus0 > wake_can_trace.peak_rx_bus0) ||
-      (bus1 > wake_can_trace.peak_rx_bus1) ||
-      (bus2 > wake_can_trace.peak_rx_bus2)) {
-    wake_can_trace.peak_rx_bus0 = MAX(wake_can_trace.peak_rx_bus0, bus0);
-    wake_can_trace.peak_rx_bus1 = MAX(wake_can_trace.peak_rx_bus1, bus1);
-    wake_can_trace.peak_rx_bus2 = MAX(wake_can_trace.peak_rx_bus2, bus2);
-    wake_can_trace_save();
-  }
 }
 
 static void wake_can_trace_append_event(uint8_t event) {

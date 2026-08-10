@@ -24,6 +24,9 @@ volatile bool wake_monitor_strict_stop_pending = false;
 volatile bool wake_monitor_reset_requested = false;
 volatile bool wake_monitor_harness_requested = false;
 volatile bool wake_monitor_committed = false;
+volatile bool wake_monitor_prepare_dirty = false;
+volatile bool wake_monitor_panda_fault_pending = false;
+volatile uint8_t wake_monitor_som_off_low_seconds = 0U;
 volatile uint8_t wake_monitor_failure_cooldown = 0U;
 volatile wake_monitor_status_t wake_monitor_status = {
   .magic = WAKE_MONITOR_STATUS_MAGIC,
@@ -93,42 +96,6 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
 static void offline_wake_raw_can_exti_init(void) {
   REGISTER_INTERRUPT(EXTI9_5_IRQn, offline_wake_raw_can_exti_irq_handler, 100U, FAULT_INTERRUPT_RATE_EXTI)
   REGISTER_INTERRUPT(EXTI15_10_IRQn, offline_wake_raw_can_exti_irq_handler, 100U, FAULT_INTERRUPT_RATE_EXTI)
-}
-
-static void offline_wake_raw_can_exti_arm(void) {
-  offline_wake_raw_can_exti_disarm();
-  wake_monitor_raw_can_edge_pending = false;
-  if (hw_type != HW_TYPE_TRES) {
-    return;
-  }
-
-  const bool flipped_harness = harness.status == HARNESS_STATUS_FLIPPED;
-  const uint32_t lines = offline_wake_tres_can_exti_lines(flipped_harness);
-  const uint32_t primary_line = offline_wake_oriented_fdcan2_exti_line(flipped_harness);
-
-  // Keep bus 0/2 on FDCAN for decoded-rate fallback. Switch only Tesla's
-  // physical bus 1 (oriented FDCAN2 RX) to GPIO input after the quiet guard so
-  // EXTI can observe the first electrical edge independently of the decoder.
-  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
-  if (flipped_harness) {
-    set_gpio_pullup(GPIOB, 12, PULL_NONE);
-    set_gpio_mode(GPIOB, 12, MODE_INPUT);
-    register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
-  } else {
-    set_gpio_pullup(GPIOB, 5, PULL_NONE);
-    set_gpio_mode(GPIOB, 5, MODE_INPUT);
-    register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
-  }
-  register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
-
-  wake_monitor_primary_can_exti_line = primary_line;
-  wake_monitor_raw_can_exti_lines = lines;
-  EXTI->PR1 = lines;
-  register_set_bits(&(EXTI->RTSR1), lines);
-  register_set_bits(&(EXTI->FTSR1), lines);
-  register_set_bits(&(EXTI->IMR1), lines);
-  NVIC_EnableIRQ(EXTI9_5_IRQn);
-  NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
 
 void enable_can_transceivers(bool enabled) {

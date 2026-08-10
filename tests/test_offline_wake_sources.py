@@ -91,13 +91,13 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       // bus to resume after a five-minute sleep. Once the shutdown guard has
       // armed the monitor, its first decoded frame must not wait for Party or
       // another bus to cross a rate threshold.
-      assert(offline_wake_primary_bus_rx_ready(true, true, true, false, 1U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 0U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 2U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 128U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, false, true, false, 1U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, true, false, false, 1U, 1U));
-      assert(!offline_wake_primary_bus_rx_ready(true, true, true, true, 1U, 1U));
+      assert(offline_wake_physical_bus_rx_ready(true, true, true, false, 0U));
+      assert(offline_wake_physical_bus_rx_ready(true, true, true, false, 1U));
+      assert(offline_wake_physical_bus_rx_ready(true, true, true, false, 2U));
+      assert(!offline_wake_physical_bus_rx_ready(true, true, true, false, 128U));
+      assert(!offline_wake_physical_bus_rx_ready(true, false, true, false, 1U));
+      assert(!offline_wake_physical_bus_rx_ready(true, true, false, false, 1U));
+      assert(!offline_wake_physical_bus_rx_ready(true, true, true, true, 1U));
 
       uint8_t primary_quiet_seconds = 0U;
       for (uint8_t i = 0U; i < WAKE_MONITOR_PRIMARY_BUS_QUIET_S - 1U; i++) {
@@ -130,7 +130,7 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
   subprocess.run([str(executable)], check=True)
 
 
-def test_new_prepare_starts_a_clean_transaction_and_configures_receive_only():
+def test_new_prepare_is_idempotent_metadata_only_and_prearms_rx():
   source = (PANDA_ROOT / "board/main_comms.h").read_text()
   prepare_helper = source.split("static void wake_monitor_prepare(", 1)[1].split("static int get_health_pkt", 1)[0]
   prepare_case = source.split("case PANDA_REQUEST_PREPARE_WAKE_MONITOR:", 1)[1].split(
@@ -138,54 +138,36 @@ def test_new_prepare_starts_a_clean_transaction_and_configures_receive_only():
   )[0]
 
   assert "wake_debug_clear_success();" in prepare_helper
-  assert prepare_helper.index("set_safety_mode(SAFETY_SILENT, 0U);") < prepare_helper.index("set_power_save_state(false);")
-  assert prepare_helper.index("set_power_save_state(false);") < prepare_helper.index("enable_can_transceivers(true);")
+  assert "set_power_save_state(false);" in prepare_helper
+  metadata_prepare = prepare_helper.split("if (committed) {", 1)[0]
+  assert "set_safety_mode(" not in metadata_prepare
+  assert "can_init_all();" not in prepare_helper
+  assert "WAKE_MONITOR_STATUS_FLAG_RX_ARMED" in prepare_helper
   assert "if (action == WAKE_MONITOR_PREPARE_START)" in prepare_case
   assert "wake_monitor_prepare(transaction, false);" in prepare_case
 
 
-def test_tres_active_monitor_wakes_from_primary_raw_can_edge():
-  main_source = (PANDA_ROOT / "board/main.c").read_text()
+def test_tres_active_monitor_keeps_primary_fdcan_decoding():
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
 
-  settle_path = main_source.split("offline_wake_primary_bus_guard_ready(", 1)[1].split("} else {", 1)[0]
-  assert "offline_wake_raw_can_exti_arm();" in settle_path
-  assert "offline_wake_primary_raw_can_edge_ready(" in power_source
-  assert "offline_wake_raw_can_edge_hint_ready(" in power_source
-  raw_irq = power_source.split("offline_wake_raw_can_exti_irq_handler", 1)[1].split("offline_wake_raw_can_exti_init", 1)[0]
-  primary_path = raw_irq.split("offline_wake_primary_raw_can_edge_ready(", 1)[1].split("} else", 1)[0]
-  assert "wake_monitor_can_activity_pending = true;" in primary_path
-  assert "wake_monitor_raw_can_edge_pending = true;" not in primary_path
-  assert "wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);" in primary_path
-  assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in primary_path
-  fallback_path = raw_irq.split("} else", 1)[1]
-  assert "wake_monitor_raw_can_edge_pending = true;" in fallback_path
-  assert "wake_monitor_can_activity_pending = true;" not in fallback_path
-  assert "wake_debug_can_exti(pending);" in power_source
-  assert "offline_wake_raw_can_exti_disarm();" in power_source
-  assert "REGISTER_INTERRUPT(EXTI9_5_IRQn" in power_source
-  assert "REGISTER_INTERRUPT(EXTI15_10_IRQn" in power_source
-
-  arm_path = power_source.split("static void offline_wake_raw_can_exti_arm", 1)[1].split(
-    "void enable_can_transceivers", 1
-  )[0]
-  assert "offline_wake_oriented_fdcan2_exti_line(flipped_harness)" in arm_path
-  assert "set_gpio_mode(GPIOB, 5, MODE_INPUT);" in arm_path
-  assert "set_gpio_mode(GPIOB, 12, MODE_INPUT);" in arm_path
+  assert "offline_wake_raw_can_exti_arm" not in power_source
+  assert "offline_wake_raw_can_exti_arm" not in main_source
+  assert "offline_wake_physical_bus_rx_ready(" in (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
 
 
-def test_host_return_restores_primary_fdcan_after_raw_edge_monitor():
+def test_host_return_does_not_reinitialize_healthy_fdcan():
   source = (PANDA_ROOT / "board/main.c").read_text()
   heartbeat_cleanup = source.split("if (wake_monitor_enabled && (heartbeat_result !=", 1)[1].split(
     "wake_debug_stage(0x38U);", 1
   )[0]
 
   assert "offline_wake_raw_can_exti_disarm();" in heartbeat_cleanup
-  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" in heartbeat_cleanup
-  assert "can_init_all();" in heartbeat_cleanup
+  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" not in heartbeat_cleanup
+  assert "can_init_all();" not in heartbeat_cleanup
 
 
-def test_abort_restores_primary_fdcan_after_raw_edge_monitor():
+def test_abort_resets_monitor_state_without_reinitializing_fdcan():
   source = (PANDA_ROOT / "board/main_comms.h").read_text()
   reset_runtime = source.split("static void wake_monitor_reset_runtime", 1)[1].split(
     "static void wake_monitor_prepare", 1
@@ -193,8 +175,8 @@ def test_abort_restores_primary_fdcan_after_raw_edge_monitor():
   abort_case = source.split("case PANDA_REQUEST_ABORT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
 
   assert "offline_wake_raw_can_exti_disarm();" in reset_runtime
-  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" in reset_runtime
-  assert "can_init_all();" in reset_runtime
+  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" not in reset_runtime
+  assert "can_init_all();" not in reset_runtime
   assert "enable_can_transceivers(true);" in reset_runtime
   assert "wake_monitor_reset_runtime();" in abort_case
 
@@ -210,7 +192,8 @@ def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   # wake detectors below this transition unreachable.
   assert "offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES)" in heartbeat_transition
   assert "if (policy.keep_can_active)" in heartbeat_transition
-  assert "WAKE_MONITOR_SOM_OFF_SETTLE_S" in heartbeat_transition
+  assert "wake_monitor_can_armed = false" not in heartbeat_transition
+  assert "offline_wake_primary_bus_guard_ready" not in heartbeat_transition
 
   shallow_idle = source.rsplit("if (wake_monitor_enabled && wake_monitor_som_off_seen) {", 1)[1].split("} else {", 1)[0]
   assert "SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;" in shallow_idle
@@ -236,18 +219,18 @@ def test_offline_monitor_does_not_buffer_stale_can_for_restarted_host():
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
 
   assert main_source.count("can_clear(&can_rx_q);") >= 2
-  assert "queue_for_host = !wake_monitor_enabled || !wake_monitor_som_off_seen" in fdcan_source
+  assert "queue_for_host = !wake_monitor_enabled || !wake_monitor_committed" in fdcan_source
 
 
-def test_tesla_wake_event_latches_only_after_shutdown_settle():
+def test_can_event_latches_immediately_after_commit_even_before_som_settle():
   source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   wake_latch = source.split("const uint8_t tesla_source =", 1)[1].split("#endif", 1)[0]
 
   assert "tesla_wake_source(&to_push, can_number)" in wake_latch
   assert "bootkick_tesla_event_should_latch(" in wake_latch
-  assert "wake_monitor_som_off_ready" in wake_latch
   assert "wake_monitor_can_armed" in wake_latch
-  assert "wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)" not in wake_latch
+  assert "wake_monitor_committed" in wake_latch
+  assert "wake_monitor_som_off_ready" not in wake_latch
 
   # A same-session heartbeat during shutdown cleanup must not erase the event;
   # only a new Linux session resolves the committed transaction.
@@ -257,39 +240,34 @@ def test_tesla_wake_event_latches_only_after_shutdown_settle():
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 
-def test_primary_bus_frame_requests_wake_without_multibus_confirmation():
+def test_any_valid_physical_bus_frame_requests_wake_without_rate_confirmation():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   policy_source = (PANDA_ROOT / "board/drivers/offline_wake_source_policy.h").read_text()
   protocol_source = (PANDA_ROOT / "board/wake_protocol.h").read_text()
 
-  assert "offline_wake_primary_bus_rx_ready(" in fdcan_source
-  assert "CAN_NUM_FROM_BUS_NUM(1U)" in fdcan_source
+  assert "offline_wake_physical_bus_rx_ready(" in fdcan_source
   assert "wake_monitor_can_activity_pending = true;" in fdcan_source
   assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in fdcan_source
   assert "to_push.addr, to_push.data" in fdcan_source
   assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in protocol_source
-  assert "offline_wake_multibus_burst_ready(" in main_source
+  assert "offline_wake_multibus_burst_ready(" not in main_source
   assert "offline_wake_can_rate_confirm_step(" not in main_source
   assert "bootkick_can_activity_ready(" in main_source
   assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" not in policy_source
   assert "wake_monitor_can_wake_requested = true;" in main_source
-  assert "wake_monitor_fast_rx_window" in main_source
-  assert "CAN_NUM_FROM_BUS_NUM(0U)" in main_source
+  assert "wake_monitor_fast_rx_window" not in main_source
 
 
-def test_shutdown_guard_learns_sleep_baseline_instead_of_freezing_live_traffic():
+def test_shutdown_guard_never_clears_a_latched_event():
   source = (PANDA_ROOT / "board/main.c").read_text()
   heartbeat_transition = source.split("if (wake_monitor_enabled && wake_monitor_committed) {", 1)[1].split(
     "if (bootkick_tesla_event_ready(", 1
   )[0]
 
-  assert "OFFLINE_WAKE_CAN_BASELINE_UNSET" in heartbeat_transition
-  assert "offline_wake_can_sleep_baseline_step(" in heartbeat_transition
-  assert "offline_wake_primary_bus_quiet_step(" in heartbeat_transition
-  assert "offline_wake_primary_bus_guard_ready(" in heartbeat_transition
-  assert "CAN_NUM_FROM_BUS_NUM(1U)" in heartbeat_transition
-  assert "wake_monitor_can_baseline[i] = rx_per_bus[i];" not in heartbeat_transition
+  assert "wake_monitor_tesla_event_pending = false" not in heartbeat_transition
+  assert "wake_monitor_can_activity_pending = false" not in heartbeat_transition
+  assert "offline_wake_primary_bus_guard_ready(" not in heartbeat_transition
 
 
 def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():

@@ -63,6 +63,7 @@ extern volatile uint8_t wake_monitor_som_off_countdown;
 extern volatile bool wake_monitor_can_armed;
 extern volatile bool wake_monitor_strict_stop_pending;
 extern volatile bool wake_monitor_committed;
+extern volatile bool wake_monitor_prepare_dirty;
 extern volatile uint8_t wake_monitor_failure_cooldown;
 extern volatile wake_monitor_status_t wake_monitor_status;
 extern bool can_silent;

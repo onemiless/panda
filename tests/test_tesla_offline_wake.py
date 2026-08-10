@@ -47,6 +47,12 @@ def test_real_tesla_frame_sequences(tmp_path):
       assert(source_for(&handle, 0x102U, 0U, 8U, left_handle) == TESLA_WAKE_SOURCE_DOOR);
       assert(source_for(&handle, 0x102U, 1U, 8U, left_handle) == TESLA_WAKE_SOURCE_DOOR);
 
+      // First bus-1 door frame from the 2026-08-10 full sleep/wake capture.
+      // It must remain a valid immediate door trigger after a quiet COMMIT.
+      const uint8_t captured_left_handle[8] = {0x00U, 0xC4U, 0x5DU, 0x34U, 0x00U, 0x38U, 0x10U, 0x4CU};
+      tesla_offline_wake_state_t captured_handle = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
+      assert(source_for(&captured_handle, 0x102U, 1U, 8U, captured_left_handle) == TESLA_WAKE_SOURCE_DOOR);
+
       const uint8_t ui_closed_4[7] = {0x18U, 0x04U, 0U, 0U, 0U, 0U, 0U};
       const uint8_t ui_open_5[7] = {0x29U, 0x05U, 0U, 0x10U, 0U, 0U, 0U};
       const uint8_t ui_open_6[7] = {0x2AU, 0x06U, 0U, 0x10U, 0U, 0U, 0U};

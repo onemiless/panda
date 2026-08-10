@@ -590,6 +590,7 @@ class Panda:
       "state": a[4],
       "result": a[5],
       "trigger_stage": a[6],
+      "flags": a[7],
     }
 
   # ******************* health *******************

@@ -20,6 +20,8 @@ volatile uint8_t bootkick_wake_post_reset_countdown = 0U;
 volatile uint8_t bootkick_wake_initial_release_countdown = 0U;
 volatile bool bootkick_wake_waiting_for_som_off = false;
 volatile uint8_t bootkick_wake_som_off_countdown = 0U;
+volatile uint8_t bootkick_wake_heartbeat_absent_countdown = 0U;
+volatile uint8_t bootkick_wake_uart_progress_countdown = 0U;
 
 // Match the proven scheduled bootkick self-test. A shorter CAN-triggered pulse
 // followed by the fast recovery reset can interrupt Tres while it is already
@@ -61,6 +63,8 @@ void bootkick_debug_restore(void) {
     bootkick_wake_final_countdown = 0U;
     bootkick_wake_waiting_for_som_off = true;
     bootkick_wake_som_off_countdown = BOOTKICK_SOM_OFF_CONFIRM_S;
+    bootkick_wake_heartbeat_absent_countdown = BOOTKICK_SOM_OFF_FALLBACK_S;
+    bootkick_wake_uart_progress_countdown = 0U;
   } else if ((wake_success.latched == 0U) && (initial_wake_stage || retry_wake_stage)) {
     const uint8_t persisted_state = (uint8_t)(wake_debug.hw_type_snapshot >> 24U);
     bootkick_wake_confirmation_pending = true;
@@ -68,6 +72,7 @@ void bootkick_debug_restore(void) {
     bootkick_wake_attempts = persisted_state & 0x3U;
     bootkick_wake_retry_countdown = (persisted_state >> 2U) & 0xFU;
     bootkick_wake_uart_seen = (persisted_state & (1U << 6U)) != 0U;
+    bootkick_wake_uart_progress_countdown = 0U;
     bootkick_wake_reset_attempted = (persisted_state & (1U << 7U)) != 0U;
     bootkick_wake_final_countdown = (bootkick_wake_uart_seen || (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS)) ?
                                       BOOTKICK_WAKE_FINAL_GRACE_S : 0U;
@@ -100,6 +105,8 @@ void bootkick_debug_schedule(uint16_t delay_s) {
   bootkick_wake_trigger_stage = 0U;
   bootkick_wake_waiting_for_som_off = false;
   bootkick_wake_som_off_countdown = 0U;
+  bootkick_wake_heartbeat_absent_countdown = 0U;
+  bootkick_wake_uart_progress_countdown = 0U;
   current_board->set_bootkick(BOOT_STANDBY);
   wake_debug_bootkick(BOOT_STANDBY, BOOT_STANDBY, 0U, 0U);
   wake_debug_bootkick_schedule((uint8_t)debug_bootkick_countdown, debug_bootkick_hold_countdown);
@@ -130,6 +137,8 @@ void bootkick_clear_wake_confirmation(void) {
   bootkick_wake_initial_release_countdown = 0U;
   bootkick_wake_waiting_for_som_off = false;
   bootkick_wake_som_off_countdown = 0U;
+  bootkick_wake_heartbeat_absent_countdown = 0U;
+  bootkick_wake_uart_progress_countdown = 0U;
 }
 
 static void bootkick_start_wake_pulse(uint32_t stage) {
@@ -155,6 +164,8 @@ bool bootkick_request_wake_pulse(uint32_t stage) {
   bootkick_wake_post_reset_countdown = 0U;
   bootkick_wake_waiting_for_som_off = false;
   bootkick_wake_som_off_countdown = 0U;
+  bootkick_wake_heartbeat_absent_countdown = 0U;
+  bootkick_wake_uart_progress_countdown = 0U;
   // Keep the first cause immutable. Retry/reset stages describe progress,
   // but must not turn a CAN wake into an apparent harness/reset wake.
   bootkick_wake_trigger_stage = stage;
@@ -181,7 +192,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   } else if (bootkick_wake_waiting_for_som_off) {
     boot_state = BOOT_STANDBY;
     const bootkick_deferred_wake_action deferred_action = bootkick_deferred_wake_step(
-      recent_heartbeat, current_board->read_som_gpio(), &bootkick_wake_som_off_countdown);
+      recent_heartbeat, current_board->read_som_gpio(), &bootkick_wake_som_off_countdown,
+      &bootkick_wake_heartbeat_absent_countdown);
     if (deferred_action == BOOTKICK_DEFERRED_ALREADY_ALIVE) {
       wake_debug_latch_success(bootkick_wake_trigger_stage);
       bootkick_clear_wake_confirmation();
@@ -191,6 +203,7 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
       bootkick_wake_retry_countdown = (hw_type == HW_TYPE_TRES) ? 0U : BOOTKICK_WAKE_RETRY_DELAY_S;
       bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
       bootkick_wake_uart_seen = false;
+      bootkick_wake_uart_progress_countdown = 0U;
       bootkick_wake_reset_attempted = false;
       bootkick_wake_final_countdown = 0U;
       bootkick_wake_post_reset_countdown = 0U;
@@ -240,17 +253,23 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
   }
 
   if (bootkick_wake_confirmation_pending && !bootkick_wake_waiting_for_som_off && !recent_heartbeat) {
+    if (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr) {
+      bootkick_wake_uart_ptr = uart_ring_som_debug.w_ptr_tx;
+      bootkick_wake_uart_seen = true;
+      bootkick_wake_uart_progress_countdown = BOOTKICK_UART_PROGRESS_TIMEOUT_S;
+      bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
+    } else if (bootkick_wake_uart_progress_countdown > 0U) {
+      bootkick_wake_uart_progress_countdown -= 1U;
+    } else {
+    }
+    const bool uart_progress_active = bootkick_wake_uart_progress_countdown > 0U;
     const bool som_powered = current_board->read_som_gpio();
     const bool tres_early_reset_ready = bootkick_tres_early_reset_ready(
       hw_type == HW_TYPE_TRES, bootkick_wake_attempts, bootkick_wake_retry_countdown,
-      bootkick_wake_pulse_active, bootkick_wake_release_countdown, bootkick_wake_uart_seen,
+      bootkick_wake_pulse_active, bootkick_wake_release_countdown, uart_progress_active,
       som_powered, bootkick_wake_reset_attempted);
-    if (!bootkick_wake_uart_seen && (uart_ring_som_debug.w_ptr_tx != bootkick_wake_uart_ptr)) {
-      // UART activity means the SoM is already booting; another DC_IN edge could interrupt it.
-      bootkick_wake_uart_seen = true;
-      bootkick_wake_final_countdown = BOOTKICK_WAKE_FINAL_GRACE_S;
-    } else if (!tres_early_reset_ready &&
-               !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !bootkick_wake_uart_seen &&
+    if (!tres_early_reset_ready &&
+               !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) && !uart_progress_active &&
                (hw_type != HW_TYPE_TRES) &&
                !bootkick_wake_reset_attempted &&
                (bootkick_wake_attempts < BOOTKICK_WAKE_MAX_ATTEMPTS)) {
@@ -267,11 +286,12 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
 
   const bool tres_early_reset_ready = bootkick_tres_early_reset_ready(
     hw_type == HW_TYPE_TRES, bootkick_wake_attempts, bootkick_wake_retry_countdown,
-    bootkick_wake_pulse_active, bootkick_wake_release_countdown, bootkick_wake_uart_seen,
+    bootkick_wake_pulse_active, bootkick_wake_release_countdown,
+    bootkick_wake_uart_progress_countdown > 0U,
     current_board->read_som_gpio(), bootkick_wake_reset_attempted);
   if (bootkick_wake_confirmation_pending && !bootkick_wake_waiting_for_som_off && !recent_heartbeat &&
       (tres_early_reset_ready ||
-       (!bootkick_wake_uart_seen && !current_board->read_som_gpio() &&
+       ((bootkick_wake_uart_progress_countdown == 0U) && !current_board->read_som_gpio() &&
         !bootkick_wake_pulse_active && (bootkick_wake_release_countdown == 0U) &&
         (bootkick_wake_attempts >= BOOTKICK_WAKE_MAX_ATTEMPTS) &&
         !bootkick_wake_reset_attempted && (hw_type == HW_TYPE_TRES)))) {
@@ -316,7 +336,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
       // Release RESET and BOOTKICK before creating the wake edge. Calling
       // BOOT_BOOTKICK here changes PA0 before PC12 is released on Tres, so a
       // deeply sleeping PMIC can miss the edge while RESET is still active.
-      if (bootkick_wake_confirmation_pending && bootkick_wake_reset_attempted && !bootkick_wake_uart_seen) {
+      if (bootkick_wake_confirmation_pending && bootkick_wake_reset_attempted &&
+          (bootkick_wake_uart_progress_countdown == 0U)) {
         boot_state = BOOT_STANDBY;
         bootkick_wake_post_reset_countdown = BOOTKICK_WAKE_POST_RESET_RELEASE_S;
         wake_debug_stage(0x40U);

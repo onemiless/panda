@@ -17,12 +17,17 @@ def test_wake_monitor_transaction_and_session_policy(tmp_path):
     int main(void) {
       assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_IDLE, 0U, 0x12345678U) == WAKE_MONITOR_PREPARE_START);
       assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x12345678U) == WAKE_MONITOR_PREPARE_IDEMPOTENT);
-      assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x87654321U) == WAKE_MONITOR_PREPARE_START);
+      assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x87654321U) == WAKE_MONITOR_PREPARE_CONFLICT);
+      assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_COMMITTED, 0x12345678U, 0x87654321U) == WAKE_MONITOR_PREPARE_CONFLICT);
+      assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_ARMED, 0x12345678U, 0x87654321U) == WAKE_MONITOR_PREPARE_CONFLICT);
+      assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_WAKING, 0x12345678U, 0x87654321U) == WAKE_MONITOR_PREPARE_CONFLICT);
       assert(wake_monitor_prepare_action(WAKE_MONITOR_STATE_IDLE, 0U, 0U) == WAKE_MONITOR_PREPARE_INVALID);
 
-      assert(wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x12345678U));
-      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_IDLE, 0x12345678U, 0x12345678U));
-      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x87654321U));
+      assert(wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x12345678U, false, true));
+      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_IDLE, 0x12345678U, 0x12345678U, false, true));
+      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x87654321U, false, true));
+      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x12345678U, true, true));
+      assert(!wake_monitor_commit_allowed(WAKE_MONITOR_STATE_PREPARED, 0x12345678U, 0x12345678U, false, false));
 
       assert(wake_monitor_heartbeat_result(true, true, 2U, 1U, true) == WAKE_MONITOR_HEARTBEAT_CONFIRMED);
       assert(wake_monitor_heartbeat_result(true, true, 2U, 1U, false) == WAKE_MONITOR_HEARTBEAT_UNATTRIBUTED);

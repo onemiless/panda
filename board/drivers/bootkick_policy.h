@@ -6,6 +6,8 @@
 #define BOOTKICK_WAKE_PRESTOP_IGNITION_PENDING_STAGE 0x32U
 #define BOOTKICK_WAKE_PRESTOP_IGNITION_PULSE_STAGE 0x37U
 #define BOOTKICK_SOM_OFF_CONFIRM_S 2U
+#define BOOTKICK_SOM_OFF_FALLBACK_S 30U
+#define BOOTKICK_UART_PROGRESS_TIMEOUT_S 5U
 
 typedef enum {
   BOOTKICK_DEFERRED_WAIT,
@@ -18,17 +20,25 @@ static inline bool bootkick_restore_waits_for_som_off(uint32_t wake_stage, uint8
 }
 
 static inline bootkick_deferred_wake_action bootkick_deferred_wake_step(bool recent_heartbeat, bool som_powered,
-                                                                       volatile uint8_t *off_confirm_countdown) {
+                                                                       volatile uint8_t *off_confirm_countdown,
+                                                                       volatile uint8_t *heartbeat_absent_countdown) {
   bootkick_deferred_wake_action action = BOOTKICK_DEFERRED_WAIT;
   if (recent_heartbeat) {
-    action = BOOTKICK_DEFERRED_ALREADY_ALIVE;
-  } else if (som_powered) {
     *off_confirm_countdown = BOOTKICK_SOM_OFF_CONFIRM_S;
-  } else if (*off_confirm_countdown > 1U) {
-    *off_confirm_countdown -= 1U;
+    *heartbeat_absent_countdown = BOOTKICK_SOM_OFF_FALLBACK_S;
+    action = BOOTKICK_DEFERRED_ALREADY_ALIVE;
   } else {
-    *off_confirm_countdown = 0U;
-    action = BOOTKICK_DEFERRED_START;
+    if (*heartbeat_absent_countdown > 0U) {
+      *heartbeat_absent_countdown -= 1U;
+    }
+    if (som_powered) {
+      *off_confirm_countdown = BOOTKICK_SOM_OFF_CONFIRM_S;
+    } else if (*off_confirm_countdown > 0U) {
+      *off_confirm_countdown -= 1U;
+    }
+    if ((*off_confirm_countdown == 0U) || (*heartbeat_absent_countdown == 0U)) {
+      action = BOOTKICK_DEFERRED_START;
+    }
   }
   return action;
 }
@@ -73,10 +83,10 @@ static inline bool bootkick_tesla_event_ready(bool monitor_enabled, bool som_off
   return monitor_enabled && som_off_ready && can_armed && tesla_event_pending && !can_wake_requested;
 }
 
-static inline bool bootkick_tesla_event_should_latch(bool monitor_enabled, bool som_off_ready,
+static inline bool bootkick_tesla_event_should_latch(bool monitor_enabled, bool committed,
                                                      bool can_armed, bool semantic_event,
                                                      bool can_wake_requested) {
-  return monitor_enabled && som_off_ready && can_armed && semantic_event && !can_wake_requested;
+  return monitor_enabled && committed && can_armed && semantic_event && !can_wake_requested;
 }
 
 static inline bool tesla_wake_counter_valid(int8_t previous_counter, int8_t counter) {

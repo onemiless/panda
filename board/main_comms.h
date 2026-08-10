@@ -12,11 +12,6 @@ static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
 
 static void wake_monitor_reset_runtime(void) {
   offline_wake_raw_can_exti_disarm();
-  // The ARMED monitor owns the oriented FDCAN2 RX pin as a GPIO. Restore the
-  // regular CAN mux for every teardown path, including a USB ABORT that can
-  // arrive before the 1 Hz heartbeat cleanup.
-  current_board->set_can_mode(CAN_MODE_NORMAL);
-  can_init_all();
   enable_can_transceivers(true);
   wake_monitor_tesla_event_pending = false;
   wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
@@ -28,14 +23,26 @@ static void wake_monitor_reset_runtime(void) {
   wake_monitor_som_off_seen = false;
   wake_monitor_som_off_ready = false;
   wake_monitor_som_off_countdown = 0U;
+  wake_monitor_som_off_low_seconds = 0U;
   wake_monitor_can_armed = false;
   wake_monitor_strict_stop_pending = false;
   wake_monitor_reset_requested = false;
   wake_monitor_harness_requested = false;
   wake_monitor_failure_cooldown = 0U;
+  wake_monitor_prepare_dirty = false;
+  wake_monitor_panda_fault_pending = false;
+  wake_monitor_status.reserved = 0U;
   bootkick_cancel_wake_pulse();
   bootkick_clear_wake_confirmation();
   current_board->set_bootkick(BOOT_STANDBY);
+}
+
+static bool wake_monitor_can_health_ready(void) {
+  bool ready = faults == 0U;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U);
+  }
+  return ready;
 }
 
 static void wake_monitor_prepare(uint32_t transaction, bool committed) {
@@ -55,9 +62,18 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
                                   transaction, wake_monitor_status.host_session, 0U);
   }
   wake_debug_clear_success();
-  set_safety_mode(SAFETY_SILENT, 0U);
+  // PREPARE only enables and verifies RX. It must not reinitialize FDCAN or
+  // change safety mode while the host is still checking the transaction.
   set_power_save_state(false);
   enable_can_transceivers(true);
+  wake_monitor_can_armed = committed;
+  wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED;
+  if (wake_monitor_can_health_ready()) {
+    wake_monitor_status.reserved |= WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
+  }
+  if (committed) {
+    set_safety_mode(SAFETY_SILENT, 0U);
+  }
   #ifdef ALLOW_DEBUG
   stop_mode_requested = false;
   #endif
@@ -177,16 +193,23 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     // **** 0xb8: final handoff after manager cleanup
     case PANDA_REQUEST_COMMIT_WAKE_MONITOR: {
       const uint32_t transaction = wake_monitor_request_transaction(req);
-      if (wake_monitor_commit_allowed(wake_monitor_status.state, wake_monitor_status.transaction, transaction)) {
+      if (wake_monitor_commit_allowed(wake_monitor_status.state, wake_monitor_status.transaction, transaction,
+                                      wake_monitor_prepare_dirty, wake_monitor_can_health_ready())) {
         wake_monitor_committed = true;
+        wake_monitor_can_armed = true;
         wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
         wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
         wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+        wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
         set_safety_mode(SAFETY_SILENT, 0U);
         current_board->set_bootkick(BOOT_STANDBY);
         wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
         wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
                                       transaction, wake_monitor_status.host_session, 0U);
+      } else {
+        wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED |
+          (wake_monitor_prepare_dirty ? WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY : 0U) |
+          (wake_monitor_can_health_ready() ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U);
       }
       break;
     }

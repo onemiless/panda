@@ -94,11 +94,10 @@ static inline bool offline_wake_primary_bus_guard_ready(uint8_t settle_countdown
   return (settle_countdown == 0U) && (quiet_seconds >= WAKE_MONITOR_PRIMARY_BUS_QUIET_S);
 }
 
-static inline bool offline_wake_primary_bus_rx_ready(bool monitor_enabled, bool som_off_ready,
-                                                     bool can_armed, bool wake_requested,
-                                                     uint8_t physical_bus, uint8_t primary_physical_bus) {
-  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
-         (primary_physical_bus < 3U) && (physical_bus == primary_physical_bus);
+static inline bool offline_wake_physical_bus_rx_ready(bool monitor_enabled, bool committed,
+                                                      bool can_armed, bool wake_requested,
+                                                      uint8_t physical_bus) {
+  return monitor_enabled && committed && can_armed && !wake_requested && (physical_bus < 3U);
 }
 
 static inline bool offline_wake_can_rate_increase(uint32_t current_rate, uint32_t baseline_rate) {
