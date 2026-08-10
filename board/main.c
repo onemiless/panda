@@ -261,10 +261,6 @@ static void tick_handler(void) {
               wake_monitor_som_off_ready = true;
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
               wake_debug_stage(0x3FU);
-              wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_ARMED, 0x3FU,
-                                            wake_monitor_status.transaction,
-                                            wake_monitor_status.committed_host_session,
-                                            wake_monitor_off_seconds);
             }
           } else {
           }
@@ -272,15 +268,31 @@ static void tick_handler(void) {
         }
       }
 
-      if (wake_monitor_enabled && wake_monitor_committed && (faults != 0U) &&
-          !wake_monitor_can_wake_requested && !wake_monitor_panda_fault_pending) {
+      const bool wake_monitor_controllers_ready = wake_monitor_can_health_ready();
+      const bool wake_monitor_rx_integrity_ready = wake_monitor_prepare_integrity_clean();
+      if (wake_monitor_offline_fault_ready(wake_monitor_enabled, wake_monitor_committed,
+                                           faults != 0U, wake_monitor_controllers_ready,
+                                           wake_monitor_rx_integrity_ready,
+                                           wake_monitor_can_wake_requested,
+                                           wake_monitor_panda_fault_pending)) {
         wake_monitor_panda_fault_pending = true;
         wake_monitor_can_activity_pending = true;
         wake_monitor_status.reserved &= (uint8_t)(~WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY);
+        uint8_t unhealthy_bus = 0xFFU;
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          if ((can_health[i].bus_off != 0U) || (can_health[i].error_passive != 0U) ||
+              !llcan_rx_ready(CANIF_FROM_CAN_NUM(i)) ||
+              (wake_monitor_prepare_rx_lost[i] != can_health[i].total_rx_lost_cnt) ||
+              (wake_monitor_prepare_can_resets[i] != can_health[i].can_core_reset_cnt)) {
+            unhealthy_bus = i;
+            break;
+          }
+        }
         const uint8_t fault_data[8] = {
           (uint8_t)(faults & 0xFFU), (uint8_t)((faults >> 8U) & 0xFFU),
           (uint8_t)((faults >> 16U) & 0xFFU), (uint8_t)((faults >> 24U) & 0xFFU),
-          fault_status, 0U, 0U, 0U,
+          fault_status, unhealthy_bus, wake_monitor_controllers_ready ? 0U : 1U,
+          wake_monitor_rx_integrity_ready ? 0U : 1U,
         };
         wake_journal_queue_event(WAKE_JOURNAL_SOURCE_PANDA_FAULT, 0x35U, 3U, 3U,
                                  5U, 0U, fault_data);

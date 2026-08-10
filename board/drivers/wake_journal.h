@@ -13,12 +13,8 @@ _Static_assert((WAKE_JOURNAL_START % WAKE_JOURNAL_RECORD_SIZE) == 0U,
 _Static_assert(WAKE_JOURNAL_CAPACITY <= UINT16_MAX, "wake journal slot index must fit USB param1");
 
 static wake_journal_info_t wake_journal_info_state;
-static wake_journal_record_t wake_journal_pending_commit;
-static wake_journal_record_t wake_journal_pending_armed;
 static wake_journal_record_t wake_journal_pending_event;
 static wake_journal_record_t wake_journal_pending_result;
-static volatile bool wake_journal_pending_commit_valid = false;
-static volatile bool wake_journal_pending_armed_valid = false;
 static volatile bool wake_journal_pending_event_valid = false;
 static volatile bool wake_journal_pending_result_valid = false;
 static bool wake_journal_cycle_active = false;
@@ -41,9 +37,9 @@ static void wake_journal_init(void) {
 
 static void wake_journal_begin_cycle(void) {
   wake_journal_info_state.current_cycle = wake_journal_info_state.next_sequence;
-  // Reserve deterministic sequence numbers for committed, armed, event, and
-  // result records. A power cut may leave a gap; records are never rewritten.
-  wake_journal_info_state.next_sequence += 4U;
+  // Only an actual wake event and its final result are persisted. PREPARE and
+  // COMMIT are observable over USB and do not justify wearing flash.
+  wake_journal_info_state.next_sequence += 2U;
   wake_journal_cycle_active = true;
   wake_journal_event_queued = false;
   wake_journal_result_queued = false;
@@ -51,45 +47,12 @@ static void wake_journal_begin_cycle(void) {
 }
 
 static void wake_journal_abort_cycle(void) {
-  wake_journal_pending_commit_valid = false;
-  wake_journal_pending_armed_valid = false;
   wake_journal_pending_event_valid = false;
   wake_journal_pending_result_valid = false;
   wake_journal_cycle_active = false;
   wake_journal_event_queued = false;
   wake_journal_result_queued = false;
   wake_journal_cycle_source = 0U;
-}
-
-static void wake_journal_queue_checkpoint(uint8_t state, uint8_t stage,
-                                          uint32_t transaction, uint32_t host_session,
-                                          uint32_t off_seconds) {
-  if (!wake_journal_cycle_active ||
-      ((wake_journal_info_state.flags & WAKE_JOURNAL_FLAG_FULL) != 0U)) {
-    return;
-  }
-
-  wake_journal_record_t *pending = NULL;
-  volatile bool *pending_valid = NULL;
-  uint32_t sequence_offset = 0U;
-  if (state == WAKE_MONITOR_STATE_COMMITTED) {
-    pending = &wake_journal_pending_commit;
-    pending_valid = &wake_journal_pending_commit_valid;
-  } else if (state == WAKE_MONITOR_STATE_ARMED) {
-    pending = &wake_journal_pending_armed;
-    pending_valid = &wake_journal_pending_armed_valid;
-    sequence_offset = 1U;
-  } else {
-    return;
-  }
-  if (*pending_valid) {
-    return;
-  }
-  wake_journal_build_checkpoint(pending,
-                                wake_journal_info_state.current_cycle + sequence_offset,
-                                wake_journal_info_state.current_cycle,
-                                state, stage, transaction, host_session, off_seconds);
-  *pending_valid = true;
 }
 
 static void wake_journal_queue_event(uint8_t source, uint8_t trigger_stage,
@@ -100,7 +63,7 @@ static void wake_journal_queue_event(uint8_t source, uint8_t trigger_stage,
     return;
   }
   wake_journal_build_event(&wake_journal_pending_event,
-                           wake_journal_info_state.current_cycle + 2U,
+                           wake_journal_info_state.current_cycle,
                            wake_journal_info_state.current_cycle,
                            source, trigger_stage, logical_bus, physical_bus,
                            len, can_id, data);
@@ -120,7 +83,7 @@ static void wake_journal_queue_result(bool success, uint8_t attempts,
     return;
   }
   wake_journal_build_result(&wake_journal_pending_result,
-                            wake_journal_info_state.current_cycle + 3U,
+                            wake_journal_info_state.current_cycle + 1U,
                             wake_journal_info_state.current_cycle,
                             wake_journal_cycle_source, success, attempts,
                             uart_seen, reset_attempted, som_gpio, heartbeat_seen,
@@ -172,14 +135,6 @@ static bool wake_journal_write_record(const wake_journal_record_t *record) {
 static void wake_journal_flush_pending(bool safe_to_write) {
   if (!safe_to_write || !WAKE_JOURNAL_FLASH_WRITES_ENABLED) {
     return;
-  }
-  if (wake_journal_pending_commit_valid) {
-    (void)wake_journal_write_record(&wake_journal_pending_commit);
-    wake_journal_pending_commit_valid = false;
-  }
-  if (wake_journal_pending_armed_valid) {
-    (void)wake_journal_write_record(&wake_journal_pending_armed);
-    wake_journal_pending_armed_valid = false;
   }
   if (wake_journal_pending_event_valid) {
     (void)wake_journal_write_record(&wake_journal_pending_event);

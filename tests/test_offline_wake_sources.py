@@ -143,6 +143,8 @@ def test_new_prepare_is_idempotent_metadata_only_and_prearms_rx():
   assert "set_safety_mode(" not in metadata_prepare
   assert "can_init_all();" not in prepare_helper
   assert "WAKE_MONITOR_STATUS_FLAG_RX_ARMED" in prepare_helper
+  assert "wake_monitor_prepared_host_session" in prepare_helper
+  assert "wake_monitor_capture_prepare_snapshot();" in prepare_helper
   assert "if (action == WAKE_MONITOR_PREPARE_START)" in prepare_case
   assert "wake_monitor_prepare(transaction, false);" in prepare_case
 
@@ -284,3 +286,30 @@ def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():
   assert "set_safety_mode(SAFETY_SILENT, 0U);" in commit_case
   abort_case = comms.split("case PANDA_REQUEST_ABORT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
   assert "wake_journal_abort_cycle();" in abort_case
+
+
+def test_commit_rechecks_fdcan_after_silent_transition_and_offline_faults_self_rescue():
+  comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+
+  assert "wake_monitor_prepared_host_session" in commit_case
+  assert "set_safety_mode(SAFETY_SILENT, 0U);" in commit_case
+  assert "wake_monitor_can_health_ready()" in commit_case
+  assert "wake_monitor_prepare_snapshot_clean()" in commit_case
+  assert "wake_monitor_offline_fault_ready(" in main_source
+  assert "WAKE_JOURNAL_SOURCE_PANDA_FAULT" in main_source
+
+
+def test_wake_journal_writes_only_first_event_and_final_result():
+  journal = (PANDA_ROOT / "board/drivers/wake_journal.h").read_text()
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  trace = (PANDA_ROOT / "board/drivers/wake_debug.h").read_text()
+
+  assert "wake_journal_pending_commit" not in journal
+  assert "wake_journal_pending_armed" not in journal
+  assert "next_sequence += 2U" in journal
+  assert "wake_journal_queue_checkpoint(" not in main_source
+  assert "wake_journal_queue_checkpoint(" not in comms
+  assert "off_seconds % 60U" not in trace

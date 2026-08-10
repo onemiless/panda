@@ -31,6 +31,13 @@ static void wake_monitor_reset_runtime(void) {
   wake_monitor_failure_cooldown = 0U;
   wake_monitor_prepare_dirty = false;
   wake_monitor_panda_fault_pending = false;
+  wake_monitor_prepared_host_session = 0U;
+  wake_monitor_prepare_rx_overflow = 0U;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    wake_monitor_prepare_rx[i] = 0U;
+    wake_monitor_prepare_rx_lost[i] = 0U;
+    wake_monitor_prepare_can_resets[i] = 0U;
+  }
   wake_monitor_status.reserved = 0U;
   bootkick_cancel_wake_pulse();
   bootkick_clear_wake_confirmation();
@@ -38,11 +45,50 @@ static void wake_monitor_reset_runtime(void) {
 }
 
 static bool wake_monitor_can_health_ready(void) {
-  bool ready = faults == 0U;
+  bool ready = (faults == 0U) && !power_save_enabled;
   for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U);
+    ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U) &&
+             llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
   }
   return ready;
+}
+
+static void wake_monitor_capture_prepare_snapshot(void) {
+  wake_monitor_prepare_rx_overflow = rx_buffer_overflow;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    wake_monitor_prepare_rx[i] = can_health[i].total_rx_cnt;
+    wake_monitor_prepare_rx_lost[i] = can_health[i].total_rx_lost_cnt;
+    wake_monitor_prepare_can_resets[i] = can_health[i].can_core_reset_cnt;
+  }
+}
+
+static bool wake_monitor_prepare_snapshot_clean(void) {
+  uint32_t current_rx[PANDA_CAN_CNT];
+  uint32_t current_rx_lost[PANDA_CAN_CNT];
+  uint32_t current_can_resets[PANDA_CAN_CNT];
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    current_rx[i] = can_health[i].total_rx_cnt;
+    current_rx_lost[i] = can_health[i].total_rx_lost_cnt;
+    current_can_resets[i] = can_health[i].can_core_reset_cnt;
+  }
+  return wake_monitor_rx_snapshot_clean(wake_monitor_prepare_rx, current_rx,
+                                        wake_monitor_prepare_rx_lost, current_rx_lost,
+                                        wake_monitor_prepare_can_resets, current_can_resets,
+                                        wake_monitor_prepare_rx_overflow, rx_buffer_overflow,
+                                        PANDA_CAN_CNT);
+}
+
+static bool wake_monitor_prepare_integrity_clean(void) {
+  uint32_t current_rx_lost[PANDA_CAN_CNT];
+  uint32_t current_can_resets[PANDA_CAN_CNT];
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    current_rx_lost[i] = can_health[i].total_rx_lost_cnt;
+    current_can_resets[i] = can_health[i].can_core_reset_cnt;
+  }
+  return wake_monitor_rx_integrity_clean(wake_monitor_prepare_rx_lost, current_rx_lost,
+                                         wake_monitor_prepare_can_resets, current_can_resets,
+                                         wake_monitor_prepare_rx_overflow, rx_buffer_overflow,
+                                         PANDA_CAN_CNT);
 }
 
 static void wake_monitor_prepare(uint32_t transaction, bool committed) {
@@ -57,22 +103,28 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
   wake_monitor_status.trigger_stage = 0U;
   wake_can_trace_reset();
   wake_journal_begin_cycle();
-  if (committed) {
-    wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
-                                  transaction, wake_monitor_status.host_session, 0U);
-  }
   wake_debug_clear_success();
   // PREPARE only enables and verifies RX. It must not reinitialize FDCAN or
   // change safety mode while the host is still checking the transaction.
   set_power_save_state(false);
   enable_can_transceivers(true);
+  wake_monitor_prepared_host_session = wake_monitor_status.host_session;
+  wake_monitor_capture_prepare_snapshot();
   wake_monitor_can_armed = committed;
-  wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED;
+  wake_monitor_status.reserved = 0U;
   if (wake_monitor_can_health_ready()) {
-    wake_monitor_status.reserved |= WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
+    wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
   }
   if (committed) {
+    wake_monitor_committed = true;
     set_safety_mode(SAFETY_SILENT, 0U);
+    if (!wake_monitor_can_health_ready() || !wake_monitor_prepare_snapshot_clean()) {
+      wake_monitor_committed = false;
+      wake_monitor_can_armed = false;
+      wake_monitor_prepare_dirty = true;
+      wake_monitor_status.state = WAKE_MONITOR_STATE_PREPARED;
+      wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
+    }
   }
   #ifdef ALLOW_DEBUG
   stop_mode_requested = false;
@@ -194,20 +246,28 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case PANDA_REQUEST_COMMIT_WAKE_MONITOR: {
       const uint32_t transaction = wake_monitor_request_transaction(req);
       if (wake_monitor_commit_allowed(wake_monitor_status.state, wake_monitor_status.transaction, transaction,
-                                      wake_monitor_prepare_dirty, wake_monitor_can_health_ready())) {
+                                      wake_monitor_prepared_host_session, wake_monitor_status.host_session,
+                                      wake_monitor_prepare_dirty,
+                                      wake_monitor_can_health_ready() && wake_monitor_prepare_snapshot_clean())) {
         wake_monitor_committed = true;
-        wake_monitor_can_armed = true;
-        wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
-        wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
-        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-        wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
+        wake_monitor_can_armed = false;
         set_safety_mode(SAFETY_SILENT, 0U);
-        current_board->set_bootkick(BOOT_STANDBY);
-        wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
-        wake_journal_queue_checkpoint(WAKE_MONITOR_STATE_COMMITTED, PANDA_WAKE_MONITOR_ARMED_STAGE,
-                                      transaction, wake_monitor_status.host_session, 0U);
+        if (wake_monitor_can_health_ready() && wake_monitor_prepare_snapshot_clean()) {
+          wake_monitor_can_armed = true;
+          wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
+          wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
+          wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
+          wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
+          current_board->set_bootkick(BOOT_STANDBY);
+          wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
+        } else {
+          wake_monitor_committed = false;
+          wake_monitor_prepare_dirty = true;
+          wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY |
+            (wake_monitor_can_health_ready() ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U);
+        }
       } else {
-        wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED |
+        wake_monitor_status.reserved =
           (wake_monitor_prepare_dirty ? WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY : 0U) |
           (wake_monitor_can_health_ready() ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U);
       }

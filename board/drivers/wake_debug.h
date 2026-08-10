@@ -143,7 +143,7 @@ static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {
   const uint32_t old_state = wake_can_trace.state;
   wake_can_trace.state = (old_state & 0xFF000000U) | ((uint32_t)flags << 16U) | off_seconds;
   const bool state_changed = ((old_state ^ wake_can_trace.state) & 0x00FF0000U) != 0U;
-  if (state_changed || ((off_seconds % 60U) == 0U)) {
+  if (state_changed) {
     wake_can_trace_save();
   }
 }

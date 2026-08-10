@@ -129,9 +129,9 @@ def test_wake_journal_uses_atomic_h7_flashword_and_persists_phases():
 
   assert "#define WAKE_JOURNAL_FLASH_WRITES_ENABLED true" in journal
   assert "flash_write_flashword(destination, words)" in journal
-  assert "wake_journal_queue_checkpoint(" in comms
+  assert "wake_journal_queue_checkpoint(" not in comms
   assert "WAKE_MONITOR_STATE_COMMITTED" in comms
-  assert "wake_journal_queue_checkpoint(" in main
+  assert "wake_journal_queue_checkpoint(" not in main
   assert "WAKE_MONITOR_STATE_ARMED" in main
 
   writer = llflash.split("bool flash_write_flashword(", 1)[1].split("void flush_write_buffer", 1)[0]

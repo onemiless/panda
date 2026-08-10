@@ -34,10 +34,47 @@ static inline wake_monitor_prepare_action_t wake_monitor_prepare_action(uint8_t 
 }
 
 static inline bool wake_monitor_commit_allowed(uint8_t state, uint32_t current_transaction,
-                                               uint32_t requested_transaction, bool prepare_dirty,
+                                               uint32_t requested_transaction,
+                                               uint32_t prepared_host_session, uint32_t current_host_session,
+                                               bool prepare_dirty,
                                                bool can_healthy) {
   return (state == WAKE_MONITOR_STATE_PREPARED) && (requested_transaction != 0U) &&
-         (current_transaction == requested_transaction) && !prepare_dirty && can_healthy;
+         (current_transaction == requested_transaction) && (prepared_host_session != 0U) &&
+         (prepared_host_session == current_host_session) && !prepare_dirty && can_healthy;
+}
+
+static inline bool wake_monitor_rx_snapshot_clean(const volatile uint32_t *prepared_rx, const volatile uint32_t *current_rx,
+                                                  const volatile uint32_t *prepared_lost, const volatile uint32_t *current_lost,
+                                                  const volatile uint32_t *prepared_resets, const volatile uint32_t *current_resets,
+                                                  uint32_t prepared_overflow, uint32_t current_overflow,
+                                                  uint8_t bus_count) {
+  bool clean = prepared_overflow == current_overflow;
+  for (uint8_t i = 0U; i < bus_count; i++) {
+    clean &= (prepared_rx[i] == current_rx[i]) &&
+             (prepared_lost[i] == current_lost[i]) &&
+             (prepared_resets[i] == current_resets[i]);
+  }
+  return clean;
+}
+
+static inline bool wake_monitor_rx_integrity_clean(const volatile uint32_t *prepared_lost, const volatile uint32_t *current_lost,
+                                                   const volatile uint32_t *prepared_resets, const volatile uint32_t *current_resets,
+                                                   uint32_t prepared_overflow, uint32_t current_overflow,
+                                                   uint8_t bus_count) {
+  bool clean = prepared_overflow == current_overflow;
+  for (uint8_t i = 0U; i < bus_count; i++) {
+    clean &= (prepared_lost[i] == current_lost[i]) &&
+             (prepared_resets[i] == current_resets[i]);
+  }
+  return clean;
+}
+
+static inline bool wake_monitor_offline_fault_ready(bool monitor_enabled, bool committed,
+                                                    bool global_fault, bool controllers_ready,
+                                                    bool rx_snapshot_clean, bool wake_requested,
+                                                    bool fault_pending) {
+  return monitor_enabled && committed && (global_fault || !controllers_ready || !rx_snapshot_clean) &&
+         !wake_requested && !fault_pending;
 }
 
 static inline wake_monitor_heartbeat_result_t wake_monitor_heartbeat_result(bool committed,

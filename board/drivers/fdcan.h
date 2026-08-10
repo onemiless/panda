@@ -290,8 +290,8 @@ void can_rx(uint8_t can_number) {
       const bool first_activity = !wake_monitor_can_activity_pending;
       wake_monitor_can_activity_pending = true;
       if (first_activity) {
-      wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
-                               GET_LEN(&to_push), to_push.addr, to_push.data);
+        wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
+                                 GET_LEN(&to_push), to_push.addr, to_push.data);
       }
     }
     if (bootkick_tesla_event_should_latch(
