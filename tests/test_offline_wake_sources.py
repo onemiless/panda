@@ -73,6 +73,28 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(offline_wake_can_rate_increase(250U, 100U));
       assert(offline_wake_can_rate_increase(50U, 0U));
 
+      // Two independent vehicle captures show physical bus 1 is the first
+      // bus to resume after a five-minute sleep. Once the shutdown guard has
+      // armed the monitor, its first decoded frame must not wait for Party or
+      // another bus to cross a rate threshold.
+      assert(offline_wake_primary_bus_rx_ready(true, true, true, false, 1U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 0U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 2U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, true, true, false, 128U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, false, true, false, 1U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, true, false, false, 1U, 1U));
+      assert(!offline_wake_primary_bus_rx_ready(true, true, true, true, 1U, 1U));
+
+      uint8_t primary_quiet_seconds = 0U;
+      for (uint8_t i = 0U; i < WAKE_MONITOR_PRIMARY_BUS_QUIET_S - 1U; i++) {
+        primary_quiet_seconds = offline_wake_primary_bus_quiet_step(primary_quiet_seconds, 0U);
+        assert(!offline_wake_primary_bus_guard_ready(0U, primary_quiet_seconds));
+      }
+      primary_quiet_seconds = offline_wake_primary_bus_quiet_step(primary_quiet_seconds, 0U);
+      assert(offline_wake_primary_bus_guard_ready(0U, primary_quiet_seconds));
+      assert(!offline_wake_primary_bus_guard_ready(1U, primary_quiet_seconds));
+      assert(offline_wake_primary_bus_quiet_step(primary_quiet_seconds, 1U) == 0U);
+
       const uint32_t quiet_window[3] = {25U, 80U, 25U};
       const uint32_t short_door_burst[3] = {48U, 160U, 48U};
       const uint32_t multimedia_only[3] = {25U, 160U, 25U};
@@ -112,7 +134,7 @@ def test_tres_active_monitor_uses_raw_can_edges_only_as_sampling_hints():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
 
-  settle_path = main_source.split("wake_monitor_som_off_countdown == 0U", 1)[1].split("} else {", 1)[0]
+  settle_path = main_source.split("offline_wake_primary_bus_guard_ready(", 1)[1].split("} else {", 1)[0]
   assert "offline_wake_raw_can_exti_arm();" in settle_path
   assert "offline_wake_raw_can_edge_hint_ready(" in power_source
   raw_irq = power_source.split("offline_wake_raw_can_exti_irq_handler", 1)[1].split("offline_wake_raw_can_exti_init", 1)[0]
@@ -183,12 +205,18 @@ def test_tesla_wake_event_latches_only_after_shutdown_settle():
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 
-def test_short_multibus_burst_requests_wake_without_two_second_confirmation():
+def test_primary_bus_frame_requests_wake_without_multibus_confirmation():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   policy_source = (PANDA_ROOT / "board/drivers/offline_wake_source_policy.h").read_text()
+  protocol_source = (PANDA_ROOT / "board/wake_protocol.h").read_text()
 
-  assert "wake_monitor_can_activity_pending = true;" not in fdcan_source
+  assert "offline_wake_primary_bus_rx_ready(" in fdcan_source
+  assert "CAN_NUM_FROM_BUS_NUM(1U)" in fdcan_source
+  assert "wake_monitor_can_activity_pending = true;" in fdcan_source
+  assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in fdcan_source
+  assert "to_push.addr, to_push.data" in fdcan_source
+  assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in protocol_source
   assert "offline_wake_multibus_burst_ready(" in main_source
   assert "offline_wake_can_rate_confirm_step(" not in main_source
   assert "bootkick_can_activity_ready(" in main_source
@@ -206,6 +234,9 @@ def test_shutdown_guard_learns_sleep_baseline_instead_of_freezing_live_traffic()
 
   assert "OFFLINE_WAKE_CAN_BASELINE_UNSET" in heartbeat_transition
   assert "offline_wake_can_sleep_baseline_step(" in heartbeat_transition
+  assert "offline_wake_primary_bus_quiet_step(" in heartbeat_transition
+  assert "offline_wake_primary_bus_guard_ready(" in heartbeat_transition
+  assert "CAN_NUM_FROM_BUS_NUM(1U)" in heartbeat_transition
   assert "wake_monitor_can_baseline[i] = rx_per_bus[i];" not in heartbeat_transition
 
 

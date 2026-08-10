@@ -1,4 +1,5 @@
 #include "board/drivers/drivers.h"
+#include "board/drivers/offline_wake_source_policy.h"
 #include "board/drivers/tesla_offline_wake.h"
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
@@ -274,7 +275,18 @@ void can_rx(uint8_t can_number) {
     // guard. Only a new semantic edge after ARMED may wake the SoM; this keeps
     // the driver's exit traffic from being replayed after the settle period.
     const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
-    if (bootkick_tesla_event_should_latch(
+    // Two independent sleep/wake captures show physical bus 1 is the first
+    // vehicle bus to resume. After the shutdown guard has observed a quiet
+    // bus and armed the monitor, preserve its first decoded frame and wake
+    // without waiting for the other controllers to cross a rate threshold.
+    if (offline_wake_primary_bus_rx_ready(
+          wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+          wake_monitor_can_wake_requested, can_number, CAN_NUM_FROM_BUS_NUM(1U))) {
+      wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
+                               GET_LEN(&to_push), to_push.addr, to_push.data);
+      wake_monitor_can_activity_pending = true;
+    }
+    if (!wake_monitor_can_activity_pending && bootkick_tesla_event_should_latch(
           wake_monitor_enabled,
           wake_monitor_som_off_ready,
           wake_monitor_can_armed,

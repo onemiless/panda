@@ -774,6 +774,7 @@ class Panda:
       3: "canRate",
       4: "ignition",
       5: "harness",
+      6: "canPrimary",
     }.get(source_id, "unknown")
     valid = a[0] == self.WAKE_JOURNAL_MAGIC and version == self.WAKE_JOURNAL_VERSION \
       and (binascii.crc32(dat[:28]) & 0xFFFFFFFF) == a[7]

@@ -11,6 +11,7 @@
 #define WAKE_MONITOR_CAN_RATE_DELTA 50U
 #define WAKE_MONITOR_CAN_FAST_TICK_HZ 8U
 #define WAKE_MONITOR_CAN_BURST_WINDOW_TICKS 2U
+#define WAKE_MONITOR_PRIMARY_BUS_QUIET_S 10U
 #define OFFLINE_WAKE_CAN_BASELINE_UNSET UINT32_MAX
 
 typedef struct {
@@ -73,6 +74,24 @@ static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bo
 static inline uint32_t offline_wake_can_sleep_baseline_step(uint32_t baseline_rate, uint32_t current_rate) {
   return (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) || (current_rate < baseline_rate) ?
          current_rate : baseline_rate;
+}
+
+static inline uint8_t offline_wake_primary_bus_quiet_step(uint8_t quiet_seconds, uint32_t received_frames) {
+  if (received_frames != 0U) {
+    return 0U;
+  }
+  return (quiet_seconds < WAKE_MONITOR_PRIMARY_BUS_QUIET_S) ? (quiet_seconds + 1U) : quiet_seconds;
+}
+
+static inline bool offline_wake_primary_bus_guard_ready(uint8_t settle_countdown, uint8_t quiet_seconds) {
+  return (settle_countdown == 0U) && (quiet_seconds >= WAKE_MONITOR_PRIMARY_BUS_QUIET_S);
+}
+
+static inline bool offline_wake_primary_bus_rx_ready(bool monitor_enabled, bool som_off_ready,
+                                                     bool can_armed, bool wake_requested,
+                                                     uint8_t physical_bus, uint8_t primary_physical_bus) {
+  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
+         (primary_physical_bus < 3U) && (physical_bus == primary_physical_bus);
 }
 
 static inline bool offline_wake_can_rate_increase(uint32_t current_rate, uint32_t baseline_rate) {

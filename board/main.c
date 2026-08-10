@@ -161,6 +161,7 @@ static void tick_handler(void) {
   static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint8_t wake_monitor_led_phase = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
+  static uint8_t wake_monitor_primary_bus_quiet_seconds = 0U;
 
   if (TICK_TIMER->SR != 0U) {
 
@@ -236,6 +237,7 @@ static void tick_handler(void) {
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
+            wake_monitor_primary_bus_quiet_seconds = 0U;
             wake_monitor_som_off_seen = true;
             wake_monitor_can_activity_pending = false;
             wake_monitor_can_led_countdown = 0U;
@@ -273,10 +275,13 @@ static void tick_handler(void) {
               wake_monitor_can_baseline[i] = offline_wake_can_sleep_baseline_step(
                 wake_monitor_can_baseline[i], rx_per_bus[i]);
             }
+            wake_monitor_primary_bus_quiet_seconds = offline_wake_primary_bus_quiet_step(
+              wake_monitor_primary_bus_quiet_seconds, rx_per_bus[CAN_NUM_FROM_BUS_NUM(1U)]);
             if (wake_monitor_som_off_countdown > 0U) {
               wake_monitor_som_off_countdown -= 1U;
             }
-            if (wake_monitor_som_off_countdown == 0U) {
+            if (offline_wake_primary_bus_guard_ready(
+                  wake_monitor_som_off_countdown, wake_monitor_primary_bus_quiet_seconds)) {
               // The guard learned the driver's exit traffic and sleeping CAN
               // baseline. Start post-arm semantic and burst detection cleanly.
               wake_monitor_tesla_event_pending = false;
@@ -558,11 +563,9 @@ static void tick_handler(void) {
       safety_tick(&current_safety_config);
     }
 
-    // A Tesla door wake can be much shorter than the 1 Hz monitor period.
-    // Keep a sliding two-tick (250 ms) window at 8 Hz and require Party plus
-    // one other physical CAN controller to rise above the learned sleep rate.
-    // This catches the observed all-bus door burst without letting the noisy
-    // vehicle/multimedia bus wake the SoM by itself.
+    // Retain the learned-rate detector as a secondary fallback for captures
+    // where another bus becomes active first. Physical bus 1 is handled at
+    // the decoded-frame boundary in fdcan.h and does not depend on this path.
     if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
         wake_monitor_som_off_ready && wake_monitor_can_armed &&
         (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {

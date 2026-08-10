@@ -31,12 +31,12 @@ def test_wake_journal_decodes_info_event_and_crc():
     Panda.WAKE_JOURNAL_MAGIC, Panda.WAKE_JOURNAL_VERSION, 32,
     4096, 8, 7, 0x2, 12, 10, 0, 0,
   )
-  auxiliary = 1 | (2 << 2) | (8 << 4) | (0x34 << 8)
-  meta = Panda.WAKE_JOURNAL_VERSION | (1 << 8) | (1 << 12) | (auxiliary << 16)
+  auxiliary = 1 | (1 << 2) | (8 << 4) | (0x35 << 8)
+  meta = Panda.WAKE_JOURNAL_VERSION | (1 << 8) | (6 << 12) | (auxiliary << 16)
   prefix = Panda.WAKE_JOURNAL_RECORD_STRUCT.pack(
-    Panda.WAKE_JOURNAL_MAGIC, 10, 10, meta, 0x102,
-    int.from_bytes(bytes.fromhex("00010203"), "little"),
-    int.from_bytes(bytes.fromhex("04050607"), "little"), 0,
+    Panda.WAKE_JOURNAL_MAGIC, 10, 10, meta, 0x122,
+    int.from_bytes(bytes.fromhex("00006c93"), "little"),
+    int.from_bytes(bytes.fromhex("09005d00"), "little"), 0,
   )[:28]
   record_payload = prefix + (binascii.crc32(prefix) & 0xFFFFFFFF).to_bytes(4, "little")
   panda = object.__new__(Panda)
@@ -59,15 +59,15 @@ def test_wake_journal_decodes_info_event_and_crc():
     "magic": Panda.WAKE_JOURNAL_MAGIC,
     "version": 1,
     "type": "event",
-    "source": "teslaDoor",
+    "source": "canPrimary",
     "sequence": 10,
     "cycle": 10,
-    "trigger_stage": 0x34,
+    "trigger_stage": 0x35,
     "logical_bus": 1,
-    "physical_bus": 2,
+    "physical_bus": 1,
     "length": 8,
-    "can_id": 0x102,
-    "data": "0001020304050607",
+    "can_id": 0x122,
+    "data": "00006c9309005d00",
   }
 
 
