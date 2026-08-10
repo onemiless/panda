@@ -39,6 +39,7 @@ volatile wake_monitor_status_t wake_monitor_status = {
 volatile bool stop_mode_requested = false;
 #endif
 static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
+static volatile uint32_t wake_monitor_primary_can_exti_line = 0U;
 
 static void offline_wake_raw_can_exti_disarm(void) {
   const uint32_t lines = wake_monitor_raw_can_exti_lines;
@@ -47,18 +48,41 @@ static void offline_wake_raw_can_exti_disarm(void) {
     EXTI->PR1 = lines;
     wake_monitor_raw_can_exti_lines = 0U;
   }
+  wake_monitor_primary_can_exti_line = 0U;
 }
 
 static void offline_wake_raw_can_exti_irq_handler(void) {
   const uint32_t armed_lines = wake_monitor_raw_can_exti_lines;
+  const uint32_t primary_line = wake_monitor_primary_can_exti_line;
   const uint32_t pending = EXTI->PR1 & armed_lines;
   if (pending != 0U) {
     EXTI->PR1 = pending;
-    if (offline_wake_raw_can_edge_hint_ready(
+    if (offline_wake_primary_raw_can_edge_ready(
+          wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
+          wake_monitor_can_wake_requested, pending, primary_line)) {
+      // Vehicle captures show physical bus 1 is the first bus to resume. Once
+      // the shutdown guard has observed ten quiet seconds, its first RX
+      // electrical edge is sufficient: do not depend on FDCAN decoding the
+      // first frame while the SoM is off.
+      register_clear_bits(&(EXTI->IMR1), armed_lines);
+      wake_monitor_can_activity_pending = true;
+      wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
+      wake_debug_can_exti(pending);
+      const uint8_t exti_data[8] = {
+        (uint8_t)(primary_line & 0xFFU),
+        (uint8_t)((primary_line >> 8U) & 0xFFU),
+        (uint8_t)((primary_line >> 16U) & 0xFFU),
+        (uint8_t)((primary_line >> 24U) & 0xFFU),
+        0U, 0U, 0U, 0U,
+      };
+      wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, 1U,
+                               CAN_NUM_FROM_BUS_NUM(1U), 4U, 0U, exti_data);
+    } else if (offline_wake_raw_can_edge_hint_ready(
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, armed_lines)) {
-      // A raw edge starts/re-arms fast decoded-frame sampling. Sleeping Teslas
-      // still produce periodic traffic, so the edge alone never wakes the SoM.
+      // Other physical buses remain sampling hints and never wake the SoM by
+      // themselves, because a sleeping Tesla can keep background traffic on
+      // those buses.
       register_clear_bits(&(EXTI->IMR1), armed_lines);
       wake_monitor_raw_can_edge_pending = true;
       wake_debug_can_exti(pending);
@@ -80,17 +104,24 @@ static void offline_wake_raw_can_exti_arm(void) {
 
   const bool flipped_harness = harness.status == HARNESS_STATUS_FLIPPED;
   const uint32_t lines = offline_wake_tres_can_exti_lines(flipped_harness);
+  const uint32_t primary_line = offline_wake_oriented_fdcan2_exti_line(flipped_harness);
 
-  // EXTI observes the input path while each pin remains in its FDCAN
-  // alternate function, so decoded-frame reception continues unchanged.
+  // Keep bus 0/2 on FDCAN for decoded-rate fallback. Switch only Tesla's
+  // physical bus 1 (oriented FDCAN2 RX) to GPIO input after the quiet guard so
+  // EXTI can observe the first electrical edge independently of the decoder.
   register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI8_PB, 0xFU);
   if (flipped_harness) {
+    set_gpio_pullup(GPIOB, 12, PULL_NONE);
+    set_gpio_mode(GPIOB, 12, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
   } else {
+    set_gpio_pullup(GPIOB, 5, PULL_NONE);
+    set_gpio_mode(GPIOB, 5, MODE_INPUT);
     register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
   }
   register_set(&(SYSCFG->EXTICR[2]), SYSCFG_EXTICR3_EXTI9_PG, 0xF0U);
 
+  wake_monitor_primary_can_exti_line = primary_line;
   wake_monitor_raw_can_exti_lines = lines;
   EXTI->PR1 = lines;
   register_set_bits(&(EXTI->RTSR1), lines);

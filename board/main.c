@@ -447,6 +447,12 @@ static void tick_handler(void) {
         wake_monitor_can_dispatch_pending = false;
         wake_monitor_can_dispatch_stage = 0U;
         wake_monitor_harness_requested = false;
+        // ARMED temporarily changes the oriented FDCAN2 RX pin to plain GPIO
+        // for raw bus-1 edge detection. Restore the normal pin mux and CAN
+        // controller before the returning host resumes pandad traffic.
+        current_board->set_can_mode(CAN_MODE_NORMAL);
+        can_init_all();
+        enable_can_transceivers(true);
         if (heartbeat_result == WAKE_MONITOR_HEARTBEAT_CONFIRMED) {
           // Recovery stages describe progress, not the original wake source.
           // Preserve 0x34/0x35 even when heartbeat returns after reset/0x41.

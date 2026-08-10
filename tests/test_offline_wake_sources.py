@@ -53,6 +53,20 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, true, 1UL << 8, raw_lines));
       assert(!offline_wake_raw_can_edge_hint_ready(true, true, true, false, 1UL << 12, raw_lines));
 
+      const uint32_t primary_raw_line = offline_wake_oriented_fdcan2_exti_line(false);
+      assert(offline_wake_primary_raw_can_edge_ready(
+        true, true, true, false, primary_raw_line, primary_raw_line));
+      assert(!offline_wake_primary_raw_can_edge_ready(
+        false, true, true, false, primary_raw_line, primary_raw_line));
+      assert(!offline_wake_primary_raw_can_edge_ready(
+        true, false, true, false, primary_raw_line, primary_raw_line));
+      assert(!offline_wake_primary_raw_can_edge_ready(
+        true, true, false, false, primary_raw_line, primary_raw_line));
+      assert(!offline_wake_primary_raw_can_edge_ready(
+        true, true, true, true, primary_raw_line, primary_raw_line));
+      assert(!offline_wake_primary_raw_can_edge_ready(
+        true, true, true, false, 1UL << 8, primary_raw_line));
+
       uint32_t sleep_baseline = OFFLINE_WAKE_CAN_BASELINE_UNSET;
       sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 600U);
       sleep_baseline = offline_wake_can_sleep_baseline_step(sleep_baseline, 120U);
@@ -130,21 +144,45 @@ def test_new_prepare_starts_a_clean_transaction_and_configures_receive_only():
   assert "wake_monitor_prepare(transaction, false);" in prepare_case
 
 
-def test_tres_active_monitor_uses_raw_can_edges_only_as_sampling_hints():
+def test_tres_active_monitor_wakes_from_primary_raw_can_edge():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
 
   settle_path = main_source.split("offline_wake_primary_bus_guard_ready(", 1)[1].split("} else {", 1)[0]
   assert "offline_wake_raw_can_exti_arm();" in settle_path
+  assert "offline_wake_primary_raw_can_edge_ready(" in power_source
   assert "offline_wake_raw_can_edge_hint_ready(" in power_source
   raw_irq = power_source.split("offline_wake_raw_can_exti_irq_handler", 1)[1].split("offline_wake_raw_can_exti_init", 1)[0]
-  assert "wake_monitor_raw_can_edge_pending = true;" in raw_irq
-  assert "wake_monitor_can_activity_pending = true;" not in raw_irq
-  assert "wake_can_trace_set_source" not in raw_irq
+  primary_path = raw_irq.split("offline_wake_primary_raw_can_edge_ready(", 1)[1].split("} else", 1)[0]
+  assert "wake_monitor_can_activity_pending = true;" in primary_path
+  assert "wake_monitor_raw_can_edge_pending = true;" not in primary_path
+  assert "wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);" in primary_path
+  assert "WAKE_JOURNAL_SOURCE_CAN_PRIMARY" in primary_path
+  fallback_path = raw_irq.split("} else", 1)[1]
+  assert "wake_monitor_raw_can_edge_pending = true;" in fallback_path
+  assert "wake_monitor_can_activity_pending = true;" not in fallback_path
   assert "wake_debug_can_exti(pending);" in power_source
   assert "offline_wake_raw_can_exti_disarm();" in power_source
   assert "REGISTER_INTERRUPT(EXTI9_5_IRQn" in power_source
   assert "REGISTER_INTERRUPT(EXTI15_10_IRQn" in power_source
+
+  arm_path = power_source.split("static void offline_wake_raw_can_exti_arm", 1)[1].split(
+    "void enable_can_transceivers", 1
+  )[0]
+  assert "offline_wake_oriented_fdcan2_exti_line(flipped_harness)" in arm_path
+  assert "set_gpio_mode(GPIOB, 5, MODE_INPUT);" in arm_path
+  assert "set_gpio_mode(GPIOB, 12, MODE_INPUT);" in arm_path
+
+
+def test_host_return_restores_primary_fdcan_after_raw_edge_monitor():
+  source = (PANDA_ROOT / "board/main.c").read_text()
+  heartbeat_cleanup = source.split("if (wake_monitor_enabled && (heartbeat_result !=", 1)[1].split(
+    "wake_debug_stage(0x38U);", 1
+  )[0]
+
+  assert "offline_wake_raw_can_exti_disarm();" in heartbeat_cleanup
+  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" in heartbeat_cleanup
+  assert "can_init_all();" in heartbeat_cleanup
 
 
 def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():

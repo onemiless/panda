@@ -71,6 +71,13 @@ static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bo
          ((pending_lines & armed_lines) != 0U);
 }
 
+static inline bool offline_wake_primary_raw_can_edge_ready(bool monitor_enabled, bool som_off_ready,
+                                                           bool can_armed, bool wake_requested,
+                                                           uint32_t pending_lines, uint32_t primary_line) {
+  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
+         (primary_line != 0U) && ((pending_lines & primary_line) != 0U);
+}
+
 static inline uint32_t offline_wake_can_sleep_baseline_step(uint32_t baseline_rate, uint32_t current_rate) {
   return (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) || (current_rate < baseline_rate) ?
          current_rate : baseline_rate;
