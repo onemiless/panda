@@ -4,11 +4,16 @@
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-static tesla_offline_wake_state_t tesla_wake_state = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
+static tesla_offline_wake_state_t tesla_wake_state[PANDA_CAN_CNT] = {
+  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
+  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
+  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
+};
 
 static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
+  const uint8_t logical_bus = msg->bus < PANDA_CAN_CNT ? msg->bus : 0U;
   const tesla_offline_wake_result_t result = tesla_offline_wake_step(
-    &tesla_wake_state, msg->addr, msg->bus, GET_LEN(msg), msg->data);
+    &tesla_wake_state[logical_bus], msg->addr, msg->bus, GET_LEN(msg), msg->data);
   if (wake_monitor_enabled) {
     const bool prearm = !wake_monitor_som_off_seen;
     const bool postarm = wake_monitor_som_off_ready && wake_monitor_can_armed;
@@ -20,7 +25,7 @@ static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
       } else {
       }
     } else if (((msg->addr == 0x102U) || (msg->addr == 0x103U)) &&
-               (msg->bus == 0U) && (GET_LEN(msg) == 8U)) {
+               ((msg->bus == 0U) || (msg->bus == 1U)) && (GET_LEN(msg) == 8U)) {
       const bool closed = tesla_front_door_latch_closed(msg->data);
       if (prearm) {
         wake_can_trace_prearm_binary(msg->addr, closed);
@@ -265,13 +270,14 @@ void can_rx(uint8_t can_number) {
     ignition_can_hook(&to_push);
 
     #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    // Always learn the current Tesla door/counter state while the host is
-    // alive. PREPARE may overlap manager cleanup, so preserve a semantic edge
-    // there as well; only COMMIT permits the 1 Hz owner to dispatch it.
+    // Always learn current Tesla state, including during the post-shutdown
+    // guard. Only a new semantic edge after ARMED may wake the SoM; this keeps
+    // the driver's exit traffic from being replayed after the settle period.
     const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
     if (bootkick_tesla_event_should_latch(
           wake_monitor_enabled,
-          wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED),
+          wake_monitor_som_off_ready,
+          wake_monitor_can_armed,
           (tesla_source != TESLA_WAKE_SOURCE_NONE) && (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED),
           wake_monitor_can_wake_requested)) {
       const uint8_t journal_source = (tesla_source == TESLA_WAKE_SOURCE_DOOR) ?

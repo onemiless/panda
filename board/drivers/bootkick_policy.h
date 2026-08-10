@@ -73,9 +73,10 @@ static inline bool bootkick_tesla_event_ready(bool monitor_enabled, bool som_off
   return monitor_enabled && som_off_ready && can_armed && tesla_event_pending && !can_wake_requested;
 }
 
-static inline bool bootkick_tesla_event_should_latch(bool monitor_enabled, bool som_off_seen,
-                                                     bool semantic_event, bool can_wake_requested) {
-  return monitor_enabled && som_off_seen && semantic_event && !can_wake_requested;
+static inline bool bootkick_tesla_event_should_latch(bool monitor_enabled, bool som_off_ready,
+                                                     bool can_armed, bool semantic_event,
+                                                     bool can_wake_requested) {
+  return monitor_enabled && som_off_ready && can_armed && semantic_event && !can_wake_requested;
 }
 
 static inline bool tesla_wake_counter_valid(int8_t previous_counter, int8_t counter) {
@@ -140,8 +141,7 @@ static inline bool tesla_door_latch_wake_ready(uint8_t logical_bus, uint8_t len,
                                                bool previous_known, bool previous_closed,
                                                const uint8_t *data) {
   const bool closed_to_open = previous_known && previous_closed && !tesla_front_door_latch_closed(data);
-  // VCLEFT/VCRIGHT door-state frames are carried on Tesla's Party bus. Panda
-  // exposes that network as logical bus 0 on the supported HW3/HW4 harnesses.
-  return (logical_bus == 0U) && (len == 8U) &&
+  // Tesla exposes these door-state frames on Party bus 0 and Vehicle bus 1.
+  return ((logical_bus == 0U) || (logical_bus == 1U)) && (len == 8U) &&
          (tesla_front_door_handle_pulled(data) || closed_to_open);
 }

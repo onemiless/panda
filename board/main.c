@@ -132,7 +132,6 @@ void wake_monitor_attempt_failed(void) {
   wake_monitor_tesla_event_pending = false;
   wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
   wake_monitor_can_activity_pending = false;
-  wake_monitor_can_activity_confirm_count = 0U;
   wake_monitor_reset_requested = false;
   wake_monitor_harness_requested = false;
   wake_monitor_can_armed = false;
@@ -154,6 +153,11 @@ static void tick_handler(void) {
     OFFLINE_WAKE_CAN_BASELINE_UNSET,
     OFFLINE_WAKE_CAN_BASELINE_UNSET,
   };
+  static uint32_t wake_monitor_fast_prev_rx[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_fast_prev_bucket[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_fast_rx_window[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint32_t wake_monitor_fast_rx_rate[PANDA_CAN_CNT] = {0U, 0U, 0U};
+  static uint8_t wake_monitor_fast_sample_count = 0U;
   static uint8_t wake_monitor_can_led_countdown = 0U;
   static uint8_t wake_monitor_led_phase = 0U;
   static uint16_t wake_monitor_off_seconds = 0U;
@@ -273,6 +277,18 @@ static void tick_handler(void) {
               wake_monitor_som_off_countdown -= 1U;
             }
             if (wake_monitor_som_off_countdown == 0U) {
+              // The guard learned the driver's exit traffic and sleeping CAN
+              // baseline. Start post-arm semantic and burst detection cleanly.
+              wake_monitor_tesla_event_pending = false;
+              wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
+              wake_monitor_can_activity_pending = false;
+              wake_monitor_fast_sample_count = 0U;
+              for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+                wake_monitor_fast_prev_rx[i] = can_health[i].total_rx_cnt;
+                wake_monitor_fast_prev_bucket[i] = 0U;
+                wake_monitor_fast_rx_window[i] = 0U;
+                wake_monitor_fast_rx_rate[i] = 0U;
+              }
               wake_monitor_som_off_ready = true;
               wake_monitor_can_armed = true;
               offline_wake_raw_can_exti_arm();
@@ -287,26 +303,6 @@ static void tick_handler(void) {
           }
         } else {
         }
-      }
-
-      bool can_rate_candidate = false;
-      if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
-          wake_monitor_som_off_ready && wake_monitor_can_armed &&
-          (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {
-        wake_can_trace_capture_rates(rx_per_bus);
-        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-          can_rate_candidate |= offline_wake_can_rate_increase(rx_per_bus[i], wake_monitor_can_baseline[i]);
-        }
-        if (offline_wake_can_rate_confirm_step(can_rate_candidate, &wake_monitor_can_activity_confirm_count)) {
-          wake_monitor_can_activity_pending = true;
-        }
-        if (wake_monitor_som_off_ready && wake_monitor_can_armed && wake_monitor_raw_can_edge_pending) {
-          // Re-arm after the decoded-frame sample has been evaluated. Persistent
-          // background edges can keep waking Panda, but cannot directly wake SoM.
-          offline_wake_raw_can_exti_arm();
-        }
-      } else {
-        (void)offline_wake_can_rate_confirm_step(false, &wake_monitor_can_activity_confirm_count);
       }
 
       if (bootkick_tesla_event_ready(
@@ -346,8 +342,14 @@ static void tick_handler(void) {
         wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
         wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
         wake_monitor_status.trigger_stage = 0x35U;
+        uint8_t burst_data[8] = {0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+        for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+          const uint16_t rate = (uint16_t)MIN(wake_monitor_fast_rx_rate[i], (uint32_t)UINT16_MAX);
+          burst_data[i * 2U] = (uint8_t)(rate & 0xFFU);
+          burst_data[(i * 2U) + 1U] = (uint8_t)(rate >> 8U);
+        }
         wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_RATE, 0x35U, 3U, 3U,
-                                 0U, 0U, wake_journal_empty_data);
+                                 6U, wake_debug.can_exti_line, burst_data);
         wake_debug_stage(0x43U);
         if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
           wake_monitor_can_dispatch_pending = false;
@@ -411,7 +413,7 @@ static void tick_handler(void) {
           ((uint8_t)wake_monitor_som_off_ready * WAKE_CAN_TRACE_FLAG_SOM_OFF_READY) |
           ((uint8_t)wake_monitor_can_armed * WAKE_CAN_TRACE_FLAG_CAN_ARMED) |
           ((uint8_t)wake_monitor_can_wake_requested * WAKE_CAN_TRACE_FLAG_WAKE_REQUESTED) |
-          ((uint8_t)(wake_monitor_can_activity_confirm_count > 0U) * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
+          ((uint8_t)wake_monitor_can_activity_pending * WAKE_CAN_TRACE_FLAG_RATE_CANDIDATE) |
           ((uint8_t)ignition_can * WAKE_CAN_TRACE_FLAG_IGNITION_CAN) |
           ((uint8_t)harness_check_ignition() * WAKE_CAN_TRACE_FLAG_IGNITION_LINE);
         wake_can_trace_update_state(wake_monitor_off_seconds, trace_flags);
@@ -434,7 +436,6 @@ static void tick_handler(void) {
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
         wake_monitor_can_activity_pending = false;
-        wake_monitor_can_activity_confirm_count = 0U;
         wake_monitor_raw_can_edge_pending = false;
         wake_monitor_can_led_countdown = 0U;
         wake_monitor_can_wake_requested = false;
@@ -556,6 +557,47 @@ static void tick_handler(void) {
       // synchronous safety check
       safety_tick(&current_safety_config);
     }
+
+    // A Tesla door wake can be much shorter than the 1 Hz monitor period.
+    // Keep a sliding two-tick (250 ms) window at 8 Hz and require Party plus
+    // one other physical CAN controller to rise above the learned sleep rate.
+    // This catches the observed all-bus door burst without letting the noisy
+    // vehicle/multimedia bus wake the SoM by itself.
+    if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_som_off_seen &&
+        wake_monitor_som_off_ready && wake_monitor_can_armed &&
+        (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED) && !wake_monitor_can_wake_requested) {
+      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+        const uint32_t current_total = can_health[i].total_rx_cnt;
+        const uint32_t current_bucket = current_total - wake_monitor_fast_prev_rx[i];
+        wake_monitor_fast_prev_rx[i] = current_total;
+        wake_monitor_fast_rx_window[i] = current_bucket + wake_monitor_fast_prev_bucket[i];
+        wake_monitor_fast_prev_bucket[i] = current_bucket;
+        wake_monitor_fast_rx_rate[i] = offline_wake_can_window_rate(wake_monitor_fast_rx_window[i]);
+      }
+      if (wake_monitor_fast_sample_count < WAKE_MONITOR_CAN_BURST_WINDOW_TICKS) {
+        wake_monitor_fast_sample_count += 1U;
+      }
+      if ((wake_monitor_fast_sample_count >= WAKE_MONITOR_CAN_BURST_WINDOW_TICKS) &&
+          offline_wake_multibus_burst_ready(wake_monitor_fast_rx_window, wake_monitor_can_baseline,
+                                            CAN_NUM_FROM_BUS_NUM(0U))) {
+        wake_monitor_can_activity_pending = true;
+        wake_can_trace_capture_rates(wake_monitor_fast_rx_rate);
+      }
+      if (wake_monitor_raw_can_edge_pending) {
+        // Re-arm only after decoded counters were sampled; raw electrical edges
+        // remain hints and never bypass the multi-bus/semantic checks.
+        offline_wake_raw_can_exti_arm();
+      }
+    } else {
+      wake_monitor_fast_sample_count = 0U;
+      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+        wake_monitor_fast_prev_rx[i] = can_health[i].total_rx_cnt;
+        wake_monitor_fast_prev_bucket[i] = 0U;
+        wake_monitor_fast_rx_window[i] = 0U;
+        wake_monitor_fast_rx_rate[i] = 0U;
+      }
+    }
+
     if (wake_monitor_enabled && wake_monitor_som_off_seen) {
       const bool wake_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
                                   wake_monitor_reset_requested || bootkick_wake_confirmation_pending;

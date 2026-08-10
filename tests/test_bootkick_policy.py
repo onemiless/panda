@@ -62,19 +62,20 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       // A completed failure is terminal and must not be retried forever.
       assert(!bootkick_wake_request_needs_dispatch(true, true, true, false, false, false, 0U, 0x3EU));
 
-      // A Tesla frame may arrive before CAN arming completes. Keep it pending
-      // until the 1 Hz owner has completed arming, then consume it exactly once.
+      // Frames observed during the shutdown guard only teach the current
+      // vehicle state. A new semantic edge may latch only after CAN arming.
       assert(!bootkick_tesla_event_ready(true, true, false, true, false));
       assert(bootkick_tesla_event_ready(true, true, true, true, false));
       assert(!bootkick_tesla_event_ready(true, true, true, false, false));
       assert(!bootkick_tesla_event_ready(true, true, true, true, true));
       assert(!bootkick_tesla_event_ready(false, true, true, true, false));
       assert(!bootkick_tesla_event_ready(true, false, true, true, false));
-      assert(bootkick_tesla_event_should_latch(true, true, true, false));
-      assert(!bootkick_tesla_event_should_latch(true, false, true, false));
-      assert(!bootkick_tesla_event_should_latch(false, true, true, false));
-      assert(!bootkick_tesla_event_should_latch(true, true, false, false));
-      assert(!bootkick_tesla_event_should_latch(true, true, true, true));
+      assert(bootkick_tesla_event_should_latch(true, true, true, true, false));
+      assert(!bootkick_tesla_event_should_latch(true, false, true, true, false));
+      assert(!bootkick_tesla_event_should_latch(true, true, false, true, false));
+      assert(!bootkick_tesla_event_should_latch(false, true, true, true, false));
+      assert(!bootkick_tesla_event_should_latch(true, true, true, false, false));
+      assert(!bootkick_tesla_event_should_latch(true, true, true, true, true));
 
       // Tesla UI_warning must show a real sequential counter and an open
       // door on Party bus before it can wake a powered-down SoM.
@@ -125,7 +126,7 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!tesla_door_latch_wake_ready(0U, 8U, true, false, latch_open));
       assert(!tesla_door_latch_wake_ready(0U, 8U, false, false, latch_open));
       assert(tesla_door_latch_wake_ready(0U, 8U, false, false, handle_pulled));
-      assert(!tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
+      assert(tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
       assert(!tesla_door_latch_wake_ready(0U, 7U, true, true, latch_open));
       return 0;
     }

@@ -37,14 +37,15 @@ def test_real_tesla_frame_sequences(tmp_path):
       assert(source_for(&direct, 0x103U, 0U, 8U, right_closed) == TESLA_WAKE_SOURCE_NONE);
       assert(source_for(&direct, 0x103U, 0U, 8U, right_open) == TESLA_WAKE_SOURCE_DOOR);
 
-      // The same addresses on Tesla's vehicle bus must not alter Party-bus
-      // door state or create a wake request.
-      assert(source_for(&direct, 0x102U, 1U, 8U, left_closed) == TESLA_WAKE_SOURCE_NONE);
-      assert(source_for(&direct, 0x102U, 1U, 8U, left_open) == TESLA_WAKE_SOURCE_NONE);
+      // Tesla Vehicle bus 1 also exposes the same door-state frames. Track
+      // that bus independently from Party bus state in firmware.
+      tesla_offline_wake_state_t vehicle_door = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
+      assert(source_for(&vehicle_door, 0x102U, 1U, 8U, left_closed) == TESLA_WAKE_SOURCE_NONE);
+      assert(source_for(&vehicle_door, 0x102U, 1U, 8U, left_open) == TESLA_WAKE_SOURCE_DOOR);
 
       tesla_offline_wake_state_t handle = TESLA_OFFLINE_WAKE_STATE_INITIALIZER;
       assert(source_for(&handle, 0x102U, 0U, 8U, left_handle) == TESLA_WAKE_SOURCE_DOOR);
-      assert(source_for(&handle, 0x102U, 1U, 8U, left_handle) == TESLA_WAKE_SOURCE_NONE);
+      assert(source_for(&handle, 0x102U, 1U, 8U, left_handle) == TESLA_WAKE_SOURCE_DOOR);
 
       const uint8_t ui_closed_4[7] = {0x18U, 0x04U, 0U, 0U, 0U, 0U, 0U};
       const uint8_t ui_open_5[7] = {0x29U, 0x05U, 0U, 0x10U, 0U, 0U, 0U};

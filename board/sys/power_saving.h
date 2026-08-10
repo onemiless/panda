@@ -12,7 +12,6 @@ volatile bool wake_monitor_enabled = false;
 volatile bool wake_monitor_tesla_event_pending = false;
 volatile uint8_t wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
 volatile bool wake_monitor_can_activity_pending = false;
-volatile uint8_t wake_monitor_can_activity_confirm_count = 0U;
 volatile bool wake_monitor_raw_can_edge_pending = false;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_can_dispatch_pending = false;
@@ -58,9 +57,8 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
     if (offline_wake_raw_can_edge_hint_ready(
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, armed_lines)) {
-      // A raw edge is only a sampling hint. Sleeping Teslas can still produce
-      // periodic traffic, and electrical edges are not proof of a wake event.
-      // The 1 Hz monitor confirms a decoded rate transition before BOOTKICK.
+      // A raw edge starts/re-arms fast decoded-frame sampling. Sleeping Teslas
+      // still produce periodic traffic, so the edge alone never wakes the SoM.
       register_clear_bits(&(EXTI->IMR1), armed_lines);
       wake_monitor_raw_can_edge_pending = true;
       wake_debug_can_exti(pending);

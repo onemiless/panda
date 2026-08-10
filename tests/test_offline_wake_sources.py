@@ -73,13 +73,15 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       assert(offline_wake_can_rate_increase(250U, 100U));
       assert(offline_wake_can_rate_increase(50U, 0U));
 
-      uint8_t confirmation = 0U;
-      assert(!offline_wake_can_rate_confirm_step(true, &confirmation));
-      assert(confirmation == 1U);
-      assert(offline_wake_can_rate_confirm_step(true, &confirmation));
-      assert(confirmation == WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S);
-      assert(!offline_wake_can_rate_confirm_step(false, &confirmation));
-      assert(confirmation == 0U);
+      const uint32_t quiet_window[3] = {25U, 80U, 25U};
+      const uint32_t short_door_burst[3] = {48U, 160U, 48U};
+      const uint32_t multimedia_only[3] = {25U, 160U, 25U};
+      const uint32_t baseline_per_second[3] = {100U, 320U, 100U};
+      assert(!offline_wake_multibus_burst_ready(quiet_window, baseline_per_second, 0U));
+      assert(offline_wake_multibus_burst_ready(short_door_burst, baseline_per_second, 0U));
+      assert(!offline_wake_multibus_burst_ready(multimedia_only, baseline_per_second, 0U));
+      // Flipped harness: logical Party bus 0 is physical CAN index 2.
+      assert(offline_wake_multibus_burst_ready(short_door_burst, baseline_per_second, 2U));
       return 0;
     }
     """
@@ -163,14 +165,15 @@ def test_offline_monitor_does_not_buffer_stale_can_for_restarted_host():
   assert "queue_for_host = !wake_monitor_enabled || !wake_monitor_som_off_seen" in fdcan_source
 
 
-def test_tesla_wake_event_latches_during_shutdown_settle_for_deferred_dispatch():
+def test_tesla_wake_event_latches_only_after_shutdown_settle():
   source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   wake_latch = source.split("const uint8_t tesla_source =", 1)[1].split("#endif", 1)[0]
 
   assert "tesla_wake_source(&to_push, can_number)" in wake_latch
   assert "bootkick_tesla_event_should_latch(" in wake_latch
-  assert "wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)" in wake_latch
-  assert "wake_monitor_som_off_ready &&" not in wake_latch
+  assert "wake_monitor_som_off_ready" in wake_latch
+  assert "wake_monitor_can_armed" in wake_latch
+  assert "wake_monitor_som_off_seen || (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)" not in wake_latch
 
   # A same-session heartbeat during shutdown cleanup must not erase the event;
   # only a new Linux session resolves the committed transaction.
@@ -180,21 +183,19 @@ def test_tesla_wake_event_latches_during_shutdown_settle_for_deferred_dispatch()
   assert "wake_monitor_can_armed ? tesla_wake_source" not in wake_latch
 
 
-def test_background_can_requires_a_sustained_rate_increase_to_request_wake():
+def test_short_multibus_burst_requests_wake_without_two_second_confirmation():
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
   policy_source = (PANDA_ROOT / "board/drivers/offline_wake_source_policy.h").read_text()
 
   assert "wake_monitor_can_activity_pending = true;" not in fdcan_source
-  assert "offline_wake_can_rate_increase(" in main_source
-  assert "offline_wake_can_rate_confirm_step(" in main_source
+  assert "offline_wake_multibus_burst_ready(" in main_source
+  assert "offline_wake_can_rate_confirm_step(" not in main_source
   assert "bootkick_can_activity_ready(" in main_source
-  assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" in policy_source
+  assert "WAKE_MONITOR_CAN_ACTIVITY_CONFIRM_S" not in policy_source
   assert "wake_monitor_can_wake_requested = true;" in main_source
-  rate_detector = main_source.split("bool can_rate_candidate = false;", 1)[1].split(
-    "if (bootkick_tesla_event_ready(", 1
-  )[0]
-  assert "wake_monitor_som_off_ready && wake_monitor_can_armed" in rate_detector
+  assert "wake_monitor_fast_rx_window" in main_source
+  assert "CAN_NUM_FROM_BUS_NUM(0U)" in main_source
 
 
 def test_shutdown_guard_learns_sleep_baseline_instead_of_freezing_live_traffic():

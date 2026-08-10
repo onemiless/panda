@@ -15,7 +15,6 @@ static void wake_monitor_reset_runtime(void) {
   wake_monitor_tesla_event_pending = false;
   wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
   wake_monitor_can_activity_pending = false;
-  wake_monitor_can_activity_confirm_count = 0U;
   wake_monitor_raw_can_edge_pending = false;
   wake_monitor_can_wake_requested = false;
   wake_monitor_can_dispatch_pending = false;
