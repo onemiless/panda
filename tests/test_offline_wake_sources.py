@@ -185,6 +185,20 @@ def test_host_return_restores_primary_fdcan_after_raw_edge_monitor():
   assert "can_init_all();" in heartbeat_cleanup
 
 
+def test_abort_restores_primary_fdcan_after_raw_edge_monitor():
+  source = (PANDA_ROOT / "board/main_comms.h").read_text()
+  reset_runtime = source.split("static void wake_monitor_reset_runtime", 1)[1].split(
+    "static void wake_monitor_prepare", 1
+  )[0]
+  abort_case = source.split("case PANDA_REQUEST_ABORT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
+
+  assert "offline_wake_raw_can_exti_disarm();" in reset_runtime
+  assert "current_board->set_can_mode(CAN_MODE_NORMAL);" in reset_runtime
+  assert "can_init_all();" in reset_runtime
+  assert "enable_can_transceivers(true);" in reset_runtime
+  assert "wake_monitor_reset_runtime();" in abort_case
+
+
 def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   source = (PANDA_ROOT / "board/main.c").read_text()
   heartbeat_transition = source.split("if (wake_monitor_enabled && wake_monitor_committed) {", 1)[1].split(

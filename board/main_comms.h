@@ -12,6 +12,12 @@ static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
 
 static void wake_monitor_reset_runtime(void) {
   offline_wake_raw_can_exti_disarm();
+  // The ARMED monitor owns the oriented FDCAN2 RX pin as a GPIO. Restore the
+  // regular CAN mux for every teardown path, including a USB ABORT that can
+  // arrive before the 1 Hz heartbeat cleanup.
+  current_board->set_can_mode(CAN_MODE_NORMAL);
+  can_init_all();
+  enable_can_transceivers(true);
   wake_monitor_tesla_event_pending = false;
   wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
   wake_monitor_can_activity_pending = false;
