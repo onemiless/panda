@@ -46,7 +46,6 @@ volatile bool stop_mode_requested = false;
 static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
 static volatile uint32_t wake_monitor_primary_can_exti_line = 0U;
 volatile bool wake_monitor_observer_enabled = false;
-static volatile bool wake_monitor_fdcan2_irq_quiesced = false;
 
 static void offline_wake_raw_can_exti_disarm(void) {
   const uint32_t lines = wake_monitor_raw_can_exti_lines;
@@ -89,55 +88,6 @@ static void offline_wake_active_can_exti_arm(void) {
   wake_debug_can_exti(primary_line);
   register_set_bits(&(EXTI->IMR1), primary_line);
   NVIC_EnableIRQ(primary_irq);
-}
-
-static void offline_wake_active_can_irq_quiesce(void) {
-  if ((hw_type != HW_TYPE_TRES) || wake_monitor_fdcan2_irq_quiesced) {
-    return;
-  }
-
-  // The successful online observer kept the oriented PB5/PB12 RX pin in its
-  // FDCAN alternate function while EXTI observed the same electrical edge.
-  // Preserve that proven pin state offline. Only mask FDCAN2's own handlers so
-  // an undrained FIFO cannot create an interrupt-rate fault after pandad exits.
-  llcan_irq_disable(cans[1]);
-  NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
-  NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
-  wake_monitor_fdcan2_irq_quiesced = true;
-}
-
-static void offline_wake_active_can_irq_restore(void) {
-  if ((hw_type == HW_TYPE_TRES) && wake_monitor_fdcan2_irq_quiesced) {
-    // Clear peripheral and NVIC state accumulated while pandad was absent
-    // before restoring normal FDCAN2 delivery to the returned host.
-    FDCAN2->IR = 0xFFFFFFFFU;
-    NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
-    NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
-    llcan_irq_enable(cans[1]);
-  }
-  wake_monitor_fdcan2_irq_quiesced = false;
-}
-
-static bool offline_wake_active_can_irq_quiesced_ready(void) {
-  if (!wake_monitor_fdcan2_irq_quiesced || (hw_type != HW_TYPE_TRES)) {
-    return false;
-  }
-  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
-  const uint8_t pin = flipped ? 12U : 5U;
-  const uint32_t line = 1UL << pin;
-  const IRQn_Type irq = flipped ? EXTI15_10_IRQn : EXTI9_5_IRQn;
-  const bool mapping_ok = flipped ?
-    ((SYSCFG->EXTICR[3] & 0xFU) == SYSCFG_EXTICR4_EXTI12_PB) :
-    ((SYSCFG->EXTICR[1] & 0xF0U) == SYSCFG_EXTICR2_EXTI5_PB);
-  const bool transceiver_ok = flipped ?
-    wake_debug_gpio_output_is_low(GPIOB, 11U) :
-    wake_debug_gpio_output_is_low(GPIOB, 10U);
-  return wake_debug_gpio_is_alternate(GPIOB, pin, GPIO_AF9_FDCAN2) &&
-         transceiver_ok && mapping_ok && ((EXTI->IMR1 & line) != 0U) &&
-         ((EXTI->RTSR1 & line) != 0U) && ((EXTI->FTSR1 & line) != 0U) &&
-         (NVIC_GetEnableIRQ(irq) != 0U) &&
-         (NVIC_GetEnableIRQ(FDCAN2_IT0_IRQn) == 0U) &&
-         (NVIC_GetEnableIRQ(FDCAN2_IT1_IRQn) == 0U);
 }
 
 static void offline_wake_active_can_diag_snapshot(bool observer) {

@@ -12,7 +12,6 @@ static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
 
 static void wake_monitor_reset_runtime(void) {
   wake_monitor_observer_enabled = false;
-  offline_wake_active_can_irq_restore();
   offline_wake_raw_can_exti_disarm();
   enable_can_transceivers(true);
   wake_monitor_can_activity_pending = false;
@@ -53,19 +52,6 @@ static bool wake_monitor_can_health_ready(void) {
 }
 
 static bool wake_monitor_offline_source_ready(void) {
-  if ((hw_type == HW_TYPE_TRES) && wake_monitor_fdcan2_irq_quiesced) {
-    bool ready = (faults == 0U) && !power_save_enabled && offline_wake_active_can_irq_quiesced_ready();
-    // FDCAN2 remains electrically connected and EXTI-armed after SoM-off, but
-    // its normal handlers are masked because pandad cannot drain the RX queue.
-    // Keep enforcing health on the two controllers that remain interrupt-fed.
-    for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-      if (i != 1U) {
-        ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U) &&
-                 llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
-      }
-    }
-    return ready;
-  }
   return wake_monitor_can_health_ready();
 }
 
@@ -316,7 +302,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     // **** 0xec: arm a receive-only PB12/PB5 observer without BOOTKICK
     case PANDA_REQUEST_ARM_WAKE_OBSERVER:
       wake_monitor_observer_enabled = false;
-      offline_wake_active_can_irq_restore();
       offline_wake_raw_can_exti_disarm();
       set_power_save_state(false);
       enable_can_transceivers(true);
