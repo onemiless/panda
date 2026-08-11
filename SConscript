@@ -30,9 +30,8 @@ def get_version(builder, build_type):
   except subprocess.CalledProcessError:
     panda_git = "unknown"
   try:
-    # Tesla safety policy lives in opendbc, but Panda previously stamped only
-    # its own revision. An opendbc safety update could therefore leave an old
-    # firmware image running after a normal code update.
+    # Safety policy is provided by opendbc, so include its revision in the
+    # firmware version to force a rebuild when that policy changes.
     opendbc_root = os.path.dirname(opendbc.__file__)
     opendbc_git = subprocess.check_output(["git", "-C", opendbc_root, "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
   except (OSError, subprocess.CalledProcessError):
@@ -112,7 +111,6 @@ def build_project(project_name, project, main, extra_flags):
   # Build bootstub
   bs_env = env.Clone()
   bs_env.Append(CFLAGS="-DBOOTSTUB", ASFLAGS="-DBOOTSTUB", LINKFLAGS="-DBOOTSTUB")
-  bs_env.Append(LINKFLAGS=[f"-Wl,--defsym=FLASH_IMAGE_LIMIT={project['APP_START_ADDRESS']}"])
   bs_elf = bs_env.Program(f"{project_dir}/bootstub.elf", [
     startup,
     "./board/crypto/rsa.c",
@@ -125,12 +123,10 @@ def build_project(project_name, project, main, extra_flags):
   main_elf = env.Program(f"{project_dir}/main.elf", [
     startup,
     main
-  ], LINKFLAGS=[f"-Wl,--section-start,.isr_vector={project['APP_START_ADDRESS']}",
-                f"-Wl,--defsym=FLASH_IMAGE_LIMIT={project['APP_END_ADDRESS']}"] + flags)
+  ], LINKFLAGS=[f"-Wl,--section-start,.isr_vector={project['APP_START_ADDRESS']}"] + flags)
   main_bin = env.Objcopy(f"{project_dir}/main.bin", main_elf)
   sign_py = File(f"./board/crypto/sign.py").srcnode().relpath
-  env.Command(f"./board/obj/{project_name}.bin.signed", main_bin,
-              f"MAX_SIZE={project['APP_MAX_SIZE']} SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
+  env.Command(f"./board/obj/{project_name}.bin.signed", main_bin, f"SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
 
 
 
@@ -138,8 +134,6 @@ base_project_h7 = {
   "STARTUP_FILE": "./board/stm32h7/startup_stm32h7x5xx.s",
   "LINKER_SCRIPT": "./board/stm32h7/stm32h7x5_flash.ld",
   "APP_START_ADDRESS": "0x8020000",
-  "APP_END_ADDRESS": "0x80C0000",
-  "APP_MAX_SIZE": "0xA0000",
   "FLAGS": [
     "-mcpu=cortex-m7",
     "-mhard-float",

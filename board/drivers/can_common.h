@@ -8,7 +8,6 @@ uint32_t rx_buffer_overflow = 0;
 
 can_health_t can_health[PANDA_CAN_CNT] = {{0}, {0}, {0}};
 
-
 bool can_silent = true;
 bool can_loopback = false;
 

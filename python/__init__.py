@@ -46,27 +46,11 @@ def calculate_checksum(data):
 def _parse_c_struct(path, name):
   type_to_format = {"uint8_t": "B", "uint16_t": "H", "uint32_t": "I", "float": "f"}
   with open(path) as f:
-    source = f.read()
-  packed_start = f"struct __attribute__((packed)) {name} {{"
-  if packed_start in source:
-    body = source.split(packed_start, 1)[1].split("};", 1)[0]
-  else:
-    match = re.search(rf"typedef\s+struct\s*\{{([^}}]*)\}}\s*{re.escape(name)}\s*;", source, re.DOTALL)
-    if match is None:
-      raise ValueError(f"missing struct {name} in {path}")
-    body = match[1]
-  lines = [l.strip() for l in body.splitlines() if l.strip()]
+    lines = [l.strip() for l in f.read().split(f"struct __attribute__((packed)) {name} {{", 1)[1].split("};", 1)[0].splitlines() if l.strip()]
   fields = [re.fullmatch(rf"({'|'.join(type_to_format)})\s+\w+;", l) for l in lines]
   if not all(fields):
     raise ValueError(f"unsupported {name} layout in {path}")
   return struct.Struct("<" + "".join(type_to_format[m[1]] for m in fields))
-
-def _parse_c_define(path, name):
-  with open(path) as f:
-    match = re.search(rf"^#define\s+{re.escape(name)}\s+(0x[0-9A-Fa-f]+|[0-9]+)[UuLl]*$", f.read(), re.MULTILINE)
-  if match is None:
-    raise ValueError(f"missing integer define {name} in {path}")
-  return int(match[1], 0)
 
 def pack_can_buffer(arr, chunk=False, fd=False):
   snds = [bytearray(), ]
@@ -155,52 +139,6 @@ class Panda:
   CAN_PACKET_VERSION = compute_version_hash(os.path.join(opendbc.INCLUDE_PATH, "opendbc/safety/can.h"))
   HEALTH_PACKET_VERSION = compute_version_hash(os.path.join(BASEDIR, "board/health.h"))
   HEALTH_STRUCT = _parse_c_struct(os.path.join(BASEDIR, "board/health.h"), "health_t")
-  WAKE_PROTOCOL_HEADER = os.path.join(BASEDIR, "board/wake_protocol.h")
-  WAKE_MONITOR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ENABLE_WAKE_MONITOR")
-  WAKE_MONITOR_PREPARE_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_PREPARE_WAKE_MONITOR")
-  WAKE_MONITOR_COMMIT_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_COMMIT_WAKE_MONITOR")
-  WAKE_MONITOR_ABORT_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ABORT_WAKE_MONITOR")
-  WAKE_MONITOR_HOST_SESSION_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_SET_HOST_SESSION")
-  WAKE_MONITOR_STATUS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_MONITOR_STATUS")
-  WAKE_OBSERVER_ARM_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ARM_WAKE_OBSERVER")
-  WAKE_OBSERVER_DISARM_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_DISARM_WAKE_OBSERVER")
-  WAKE_MONITOR_ARMED_STAGE = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_WAKE_MONITOR_ARMED_STAGE")
-  WAKE_MONITOR_STATUS_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_MONITOR_STATUS_MAGIC")
-  WAKE_DEBUG_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_DEBUG_MAGIC")
-  WAKE_ACTIVE_CAN_DIAG_V1_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_V1_MAGIC")
-  WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK")
-  WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT")
-  WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT")
-  WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT")
-  WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT")
-  WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT")
-  WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT")
-  WAKE_ACTIVE_CAN_FIRST_RX_VALID = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_FIRST_RX_VALID")
-  WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED")
-  WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED")
-  WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED")
-  WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED")
-  WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED")
-  WAKE_ACTIVE_CAN_EXTI_MAPPING_OK = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_MAPPING_OK")
-  WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN")
-  WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING")
-  WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH")
-  WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH")
-  WAKE_ACTIVE_CAN_EXTI_GPIO_MODE = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_GPIO_MODE")
-  WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
-  WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
-  WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
-  WAKE_CAN_TRACE_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_CAN_TRACE")
-  WAKE_JOURNAL_INFO_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_JOURNAL_INFO")
-  WAKE_JOURNAL_RECORD_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_JOURNAL_RECORD")
-  WAKE_JOURNAL_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_JOURNAL_MAGIC")
-  WAKE_JOURNAL_VERSION = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_JOURNAL_VERSION")
-  WAKE_DEBUG_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_debug_t")
-  WAKE_SUCCESS_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_success_t")
-  WAKE_CAN_TRACE_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_can_trace_t")
-  WAKE_JOURNAL_INFO_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_info_t")
-  WAKE_JOURNAL_RECORD_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_journal_record_t")
-  WAKE_MONITOR_STATUS_STRUCT = _parse_c_struct(WAKE_PROTOCOL_HEADER, "wake_monitor_status_t")
   CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIIHHBBBIIII")
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
@@ -464,12 +402,10 @@ class Panda:
     assert Panda.flasher_present(handle)
 
     # determine sectors to erase
-    app_capacity = mcu_type.config.app_end_address - mcu_type.config.app_address
-    assert 0 < len(code) <= app_capacity, "Binary too large! Risk of overwriting reserved flash."
-    app_sector_sizes = mcu_type.config.sector_sizes[1:mcu_type.config.app_last_sector + 1]
-    apps_sectors_cumsum = accumulate(app_sector_sizes)
-    last_sector = next((i + 1 for i, v in enumerate(apps_sectors_cumsum) if v >= len(code)), -1)
-    assert 1 <= last_sector <= mcu_type.config.app_last_sector, "No writable application sector for binary."
+    apps_sectors_cumsum = accumulate(mcu_type.config.sector_sizes[1:])
+    last_sector = next((i + 1 for i, v in enumerate(apps_sectors_cumsum) if v > len(code)), -1)
+    assert last_sector >= 1, "Binary too small? No sector to erase."
+    assert last_sector < 7, "Binary too large! Risk of overwriting provisioning chunk."
 
     # unlock flash
     logger.info("flash: unlocking")
@@ -574,55 +510,6 @@ class Panda:
   def call_control_api(self, msg):
     self._handle.controlWrite(Panda.REQUEST_OUT, msg, 0, 0, b'')
 
-  def enable_deepsleep(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_REQUEST, 0, 0, b'')
-
-  @staticmethod
-  def _wake_transaction_words(value: int) -> tuple[int, int]:
-    value &= 0xFFFFFFFF
-    return value & 0xFFFF, (value >> 16) & 0xFFFF
-
-  def prepare_wake_monitor(self, transaction: int):
-    low, high = self._wake_transaction_words(transaction)
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_PREPARE_REQUEST, low, high, b'')
-    return self.wake_monitor_status()
-
-  def commit_wake_monitor(self, transaction: int):
-    low, high = self._wake_transaction_words(transaction)
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_COMMIT_REQUEST, low, high, b'')
-    return self.wake_monitor_status()
-
-  def abort_wake_monitor(self, transaction: int):
-    low, high = self._wake_transaction_words(transaction)
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_ABORT_REQUEST, low, high, b'')
-    return self.wake_monitor_status()
-
-  def set_host_session(self, host_session: int):
-    low, high = self._wake_transaction_words(host_session)
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_HOST_SESSION_REQUEST, low, high, b'')
-
-  def arm_wake_observer(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_ARM_REQUEST, 0, 0, b'')
-    return self.wake_debug()
-
-  def disarm_wake_observer(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_DISARM_REQUEST, 0, 0, b'')
-    return self.wake_debug()
-
-  def wake_monitor_status(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_MONITOR_STATUS_REQUEST, 0, 0, self.WAKE_MONITOR_STATUS_STRUCT.size)
-    a = self.WAKE_MONITOR_STATUS_STRUCT.unpack(dat)
-    return {
-      "magic": a[0],
-      "transaction": a[1],
-      "host_session": a[2],
-      "committed_host_session": a[3],
-      "state": a[4],
-      "result": a[5],
-      "trigger_stage": a[6],
-      "flags": a[7],
-    }
-
   # ******************* health *******************
 
   @ensure_health_packet_version
@@ -659,252 +546,6 @@ class Panda:
       "controls_allowed_lateral": a[26],
       "controls_allowed_longitudinal": a[27],
     }
-
-  def wake_debug(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_DEBUG_REQUEST, 0, 0, self.WAKE_DEBUG_STRUCT.size)
-    a = self.WAKE_DEBUG_STRUCT.unpack(dat)
-    active_can_snapshot_valid = (
-      a[4] & Panda.WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK
-    ) == Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC
-    first_rx = None
-    if active_can_snapshot_valid and (a[7] & Panda.WAKE_ACTIVE_CAN_FIRST_RX_VALID):
-      first_rx = {"bus": (a[7] >> 29) & 0x3, "address": a[7] & 0x1FFFFFFF}
-    active_can_io = a[4]
-    active_can_exti = a[5]
-    return {
-      "magic": a[0],
-      "boot_count": a[1],
-      "reset_reason": a[2],
-      "stage": a[3],
-      "snapshot_kind": "activeFdcanV1" if active_can_snapshot_valid else "legacyOrStopExti",
-      "enter_count": None if active_can_snapshot_valid else a[4],
-      "wfi_return_count": None if active_can_snapshot_valid else a[5],
-      "pre_wfi_exti_pr1": None if active_can_snapshot_valid else a[6],
-      "post_wfi_exti_pr1": None if active_can_snapshot_valid else a[7],
-      "exti_imr1": None if active_can_snapshot_valid else a[8],
-      "exti_rtsr1": None if active_can_snapshot_valid else a[9],
-      "exti_ftsr1": None if active_can_snapshot_valid else a[10],
-      "hw_type_snapshot": a[11] & 0xFF,
-      "bootkick_phase_mask": (a[11] >> 8) & 0xFF,
-      "bootkick_pin_levels": (a[11] >> 16) & 0xFF,
-      "bootkick_wake_attempts": (a[11] >> 24) & 0x3,
-      "bootkick_wake_retry_countdown": (a[11] >> 26) & 0xF,
-      "bootkick_wake_uart_seen": bool((a[11] >> 30) & 0x1),
-      "bootkick_wake_reset_attempted": bool((a[11] >> 31) & 0x1),
-      "can_exti_line": a[12] & 0xFFFF,
-      "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFF,
-      "bootkick_debug_hold_countdown": (a[12] >> 24) & 0xFF,
-      "exti_emr1": None if active_can_snapshot_valid else a[13],
-      "active_can_snapshot_valid": active_can_snapshot_valid,
-      "active_can_snapshot_version": 1 if active_can_snapshot_valid else None,
-      "active_can_cccr": [a[6] & 0xFFFF, (a[6] >> 16) & 0xFFFF, a[8]] if active_can_snapshot_valid else None,
-      "active_can_ie": [a[9], a[10], a[13]] if active_can_snapshot_valid else None,
-      "active_can_first_rx": first_rx,
-      "active_can_exti": {
-        "observer_armed": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED),
-        "imr_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED),
-        "rising_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED),
-        "falling_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED),
-        "nvic_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED),
-        "mapping_ok": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_MAPPING_OK),
-        "irq_seen": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN),
-        "primary_pending": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING),
-        "arm_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH),
-        "irq_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH),
-        "gpio_mode": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_GPIO_MODE),
-      } if active_can_snapshot_valid else None,
-      "active_can_io": {
-        "fdcan2_pb5_af": bool(active_can_io & (1 << 0)),
-        "fdcan2_pb12_af": bool(active_can_io & (1 << 1)),
-        "fdcan1_pb8_af": bool(active_can_io & (1 << 2)),
-        "fdcan3_pg9_af": bool(active_can_io & (1 << 3)),
-        "transceiver2_enabled": bool(active_can_io & (1 << 4)),
-        "transceiver4_enabled": bool(active_can_io & (1 << 5)),
-        "transceiver13_g11_enabled": bool(active_can_io & (1 << 6)),
-        "transceiver13_d7_enabled": bool(active_can_io & (1 << 7)),
-        "rx_ready": [bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT + i))) for i in range(3)],
-        "rx_irq_enabled": [
-          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT + i))) for i in range(3)
-        ],
-        "ile_enabled": [
-          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT + i))) for i in range(3)
-        ],
-        "rx_fifo0_to_it0": [
-          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT + i))) for i in range(3)
-        ],
-        "safety_silent": bool(active_can_io & (1 << Panda.WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT)),
-        "rx_irq_entry_seen": [
-          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT + i))) for i in range(3)
-        ],
-      } if active_can_snapshot_valid else None,
-      "harness_status": a[14],
-      "ignition_line": a[15],
-      "ignition_can_seen": a[16],
-      "som_gpio": a[17],
-      "bootkick_state": a[18],
-      "bootkick_prev_state": a[19],
-      "bootkick_waiting_countdown": a[20],
-      "bootkick_reset_countdown": a[21],
-    }
-
-  def wake_success(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_SUCCESS_REQUEST, 0, 0, self.WAKE_SUCCESS_STRUCT.size)
-    a = self.WAKE_SUCCESS_STRUCT.unpack(dat)
-    return {
-      "magic": a[0],
-      "latched": a[1],
-      "stage": a[2],
-      "boot_count": a[3],
-      "reset_reason": a[4],
-      "can_exti_line": a[5],
-      "harness_status": a[6],
-      "ignition_line": a[7],
-      "ignition_can_seen": a[8],
-      "som_gpio": a[9],
-    }
-
-  def wake_can_trace(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_CAN_TRACE_REQUEST, 0, 0, self.WAKE_CAN_TRACE_STRUCT.size)
-    a = self.WAKE_CAN_TRACE_STRUCT.unpack(dat)
-    flags = (a[1] >> 16) & 0xFF
-    peak_bus = (a[1] >> 24) & 0xFF
-    wake_source = {
-      0xFC: "rawCanEdge",
-      0xFD: "teslaDoor",
-      0xFE: "teslaPower",
-    }.get(peak_bus)
-    power_states = ("off", "conditioning", "accessory", "drive")
-    events = []
-    for i in range(8):
-      event = (a[6] >> (i * 4)) & 0xF
-      if event == 0:
-        break
-      if event <= 0xC:
-        encoded = event - 1
-        events.append(f"power:bus{encoded // 4}:{power_states[encoded % 4]}")
-      else:
-        events.append({0xD: "leftDoor", 0xE: "rightDoor", 0xF: "uiDoor"}[event])
-    power_meta, left_meta, right_meta, ui_meta = a[7:11]
-    prearm_power_seen = bool(power_meta & 0x80)
-
-    def binary_prearm(meta):
-      return bool(meta & 0x40) if meta & 0x80 else None
-
-    def binary_postarm(meta):
-      return bool(meta & 0x20) if meta & 0x1F else None
-
-    return {
-      "magic": a[0],
-      "off_seconds": a[1] & 0xFFFF,
-      "monitor_enabled": bool(flags & (1 << 0)),
-      "som_off_seen": bool(flags & (1 << 1)),
-      "som_off_ready": bool(flags & (1 << 2)),
-      "can_armed": bool(flags & (1 << 3)),
-      "wake_requested": bool(flags & (1 << 4)),
-      "rate_candidate": bool(flags & (1 << 5)),
-      "ignition_can": bool(flags & (1 << 6)),
-      "ignition_line": bool(flags & (1 << 7)),
-      "peak_bus": None if peak_bus >= 0xFC else peak_bus,
-      "wake_source": wake_source,
-      "peak_rx_per_sec": [a[2], a[3], a[4]],
-      "valid_rx_seen": [a[2] != 0, a[3] != 0, a[4] != 0],
-      "first_event_seconds": a[5] or None,
-      "event_sequence": events,
-      "prearm_power_state": power_states[(power_meta >> 5) & 0x3] if prearm_power_seen else None,
-      "power_frame_count": power_meta & 0x1F,
-      "left_door_frame_count": left_meta & 0x1F,
-      "right_door_frame_count": right_meta & 0x1F,
-      "ui_door_frame_count": ui_meta & 0x1F,
-      "prearm_left_door_closed": binary_prearm(left_meta),
-      "postarm_left_door_closed": binary_postarm(left_meta),
-      "prearm_right_door_closed": binary_prearm(right_meta),
-      "postarm_right_door_closed": binary_postarm(right_meta),
-      "prearm_ui_door_open": binary_prearm(ui_meta),
-      "postarm_ui_door_open": binary_postarm(ui_meta),
-    }
-
-  def wake_journal_info(self, timeout: int = 15000):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_JOURNAL_INFO_REQUEST, 0, 0,
-                                   self.WAKE_JOURNAL_INFO_STRUCT.size, timeout=timeout)
-    a = self.WAKE_JOURNAL_INFO_STRUCT.unpack(dat)
-    return {
-      "magic": a[0],
-      "version": a[1],
-      "record_size": a[2],
-      "capacity": a[3],
-      "used_slots": a[4],
-      "valid_records": a[5],
-      "full": bool(a[6] & 0x1),
-      "foreign_data": bool(a[6] & 0x2),
-      "next_sequence": a[7],
-      "current_cycle": a[8],
-    }
-
-  def wake_journal_record(self, slot: int, timeout: int = 15000):
-    if not 0 <= slot <= 0xFFFF:
-      raise ValueError(f"invalid wake journal slot {slot}")
-    dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_JOURNAL_RECORD_REQUEST,
-                                   slot, 0, self.WAKE_JOURNAL_RECORD_STRUCT.size, timeout=timeout)
-    a = self.WAKE_JOURNAL_RECORD_STRUCT.unpack(dat)
-    meta = a[3]
-    version = meta & 0xFF
-    record_type = (meta >> 8) & 0xF
-    source_id = (meta >> 12) & 0xF
-    auxiliary = (meta >> 16) & 0xFFFF
-    source = {
-      1: "teslaDoor",
-      2: "teslaPower",
-      3: "canRate",
-      4: "ignition",
-      5: "harness",
-      6: "canPrimary",
-    }.get(source_id, "unknown")
-    valid = a[0] == self.WAKE_JOURNAL_MAGIC and version == self.WAKE_JOURNAL_VERSION \
-      and (binascii.crc32(dat[:28]) & 0xFFFFFFFF) == a[7]
-    record = {
-      "valid": valid,
-      "magic": a[0],
-      "version": version,
-      "type": {1: "event", 2: "result", 3: "checkpoint"}.get(record_type, "unknown"),
-      "source": source,
-      "sequence": a[1],
-      "cycle": a[2],
-    }
-    if record_type == 1:
-      length = (auxiliary >> 4) & 0xF
-      payload = struct.pack("<II", a[5], a[6])[:min(length, 8)]
-      record.update({
-        "trigger_stage": (auxiliary >> 8) & 0xFF,
-        "logical_bus": auxiliary & 0x3,
-        "physical_bus": (auxiliary >> 2) & 0x3,
-        "length": length,
-        "can_id": a[4],
-        "data": payload.hex(),
-      })
-    elif record_type == 2:
-      record.update({
-        "success": bool(auxiliary & (1 << 6)),
-        "attempts": auxiliary & 0x3,
-        "uart_seen": bool(auxiliary & (1 << 2)),
-        "reset_attempted": bool(auxiliary & (1 << 3)),
-        "som_gpio": bool(auxiliary & (1 << 4)),
-        "heartbeat_seen": bool(auxiliary & (1 << 5)),
-        "trigger_stage": a[4],
-        "final_stage": a[5],
-        "reset_reason": a[6],
-      })
-    elif record_type == 3:
-      record.update({
-        "state": auxiliary & 0xFF,
-        "stage": (auxiliary >> 8) & 0xFF,
-        "transaction": a[4],
-        "host_session": a[5],
-        "off_seconds": a[6],
-      })
-    return record
-
-  def clear_wake_success(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_SUCCESS_CLEAR_REQUEST, 0, 0, b'')
 
   @ensure_health_packet_version
   def can_health(self, can_number):
@@ -966,7 +607,7 @@ class Panda:
     return bytes(part_1 + part_2)
 
   def get_type(self):
-    return self._handle.controlRead(Panda.REQUEST_IN, 0xc1, 0, 0, 0x40)
+    return b'\x09'
 
   def get_packets_versions(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, 0xdd, 0, 0, 8)
@@ -1019,10 +660,7 @@ class Panda:
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xe7, int(power_save_enabled), 0, b'')
 
   def enter_stop_mode(self):
-    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_REQUEST, 0, 0, b'', expect_disconnect=True)
-
-  def schedule_bootkick_test(self, delay_s):
-    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb6, int(delay_s), 0, b'')
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, 0, 0, b'', expect_disconnect=True)
 
   def set_safety_mode(self, mode=CarParams.SafetyModel.silent, param=0):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xdc, mode, param, b'')

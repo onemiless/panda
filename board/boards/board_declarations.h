@@ -8,7 +8,6 @@ typedef enum {
   BOOT_STANDBY,
   BOOT_BOOTKICK,
   BOOT_RESET,
-  BOOT_WAKE_RELEASE,
 } BootState;
 
 typedef void (*board_init)(void);

@@ -1,3 +1,6 @@
+// from the linker script
+#define APP_START_ADDRESS 0x8020000U
+
 // flasher state variables
 uint32_t *prog_ptr = NULL;
 bool unlocked = false;
@@ -14,7 +17,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   *((uint32_t **)&resp[8]) = prog_ptr;
   resp_len = 0xc;
 
-  uint16_t sec;
+  int sec;
   switch (req->request) {
     // **** 0xb0: flasher echo
     case 0xb0:
@@ -33,7 +36,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     // **** 0xb2: erase sector
     case 0xb2:
       sec = req->param1;
-      if (flash_app_sector_allowed(sec) && flash_erase_sector((uint8_t)sec, unlocked)) {
+      if (flash_erase_sector(sec, unlocked)) {
         resp[1] = 0xff;
       }
       break;
@@ -103,14 +106,6 @@ int comms_can_read(uint8_t *data, uint32_t max_len) {
 void refresh_can_tx_slots_available(void) {}
 
 void comms_endpoint2_write(const uint8_t *data, uint32_t len) {
-  const uint32_t prog_addr = (uint32_t)prog_ptr;
-  if (!unlocked || ((len % sizeof(uint32_t)) != 0U) || !flash_app_write_allowed(prog_addr, len)) {
-    // Keep the pointer outside the writable range after any boundary failure,
-    // so subsequent chunks cannot resume an invalid image write.
-    prog_ptr = (uint32_t *)APP_END_ADDRESS;
-    return;
-  }
-
   led_set(LED_RED, 0);
   for (uint32_t i = 0; i < len/4; i++) {
     flash_write_word(prog_ptr, *(uint32_t*)(data+(i*4)));

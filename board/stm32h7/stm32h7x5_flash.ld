@@ -157,11 +157,6 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
   } >DTCMRAM AT> FLASH
 
-  /* FLASH_IMAGE_LIMIT is supplied per image by SCons. It caps the bootstub at
-     sector 0 and all application images before reserved wake-journal sector 6. */
-  _flash_load_end = LOADADDR(.data) + SIZEOF(.data);
-  ASSERT(_flash_load_end <= FLASH_IMAGE_LIMIT, "flash image overlaps a reserved sector")
-
 
   /* Uninitialized data section */
   . = ALIGN(4);

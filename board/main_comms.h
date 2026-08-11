@@ -1,140 +1,8 @@
-#include "board/wake_protocol.h"
-
 extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 
 // Prototypes
 void set_safety_mode(uint16_t mode, uint16_t param);
 bool is_car_safety_mode(uint16_t mode);
-
-static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
-  return ((uint32_t)req->param2 << 16U) | req->param1;
-}
-
-static void wake_monitor_reset_runtime(void) {
-  wake_monitor_observer_enabled = false;
-  offline_wake_raw_can_exti_disarm();
-  enable_can_transceivers(true);
-  wake_monitor_can_activity_pending = false;
-  wake_monitor_can_wake_requested = false;
-  wake_monitor_can_dispatch_pending = false;
-  wake_monitor_can_dispatch_stage = 0U;
-  wake_monitor_som_off_seen = false;
-  wake_monitor_som_off_ready = false;
-  wake_monitor_som_off_countdown = 0U;
-  wake_monitor_som_off_low_seconds = 0U;
-  wake_monitor_can_armed = false;
-  wake_monitor_strict_stop_pending = false;
-  wake_monitor_reset_requested = false;
-  wake_monitor_harness_requested = false;
-  wake_monitor_failure_cooldown = 0U;
-  wake_monitor_prepare_dirty = false;
-  wake_monitor_panda_fault_pending = false;
-  wake_monitor_prepared_host_session = 0U;
-  wake_monitor_prepare_rx_overflow = 0U;
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    wake_monitor_prepare_rx[i] = 0U;
-    wake_monitor_prepare_rx_lost[i] = 0U;
-    wake_monitor_prepare_can_resets[i] = 0U;
-  }
-  wake_monitor_status.reserved = 0U;
-  bootkick_cancel_wake_pulse();
-  bootkick_clear_wake_confirmation();
-  current_board->set_bootkick(BOOT_STANDBY);
-}
-
-static bool wake_monitor_can_health_ready(void) {
-  bool ready = (faults == 0U) && !power_save_enabled && wake_monitor_tres_can_io_ready();
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U) &&
-             llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
-  }
-  return ready;
-}
-
-static bool wake_monitor_offline_source_ready(void) {
-  return wake_monitor_can_health_ready();
-}
-
-static void wake_monitor_capture_prepare_snapshot(void) {
-  wake_monitor_prepare_rx_overflow = rx_buffer_overflow;
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    wake_monitor_prepare_rx[i] = can_health[i].total_rx_cnt;
-    wake_monitor_prepare_rx_lost[i] = can_health[i].total_rx_lost_cnt;
-    wake_monitor_prepare_can_resets[i] = can_health[i].can_core_reset_cnt;
-  }
-}
-
-static bool wake_monitor_prepare_snapshot_clean(void) {
-  uint32_t current_rx[PANDA_CAN_CNT];
-  uint32_t current_rx_lost[PANDA_CAN_CNT];
-  uint32_t current_can_resets[PANDA_CAN_CNT];
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    current_rx[i] = can_health[i].total_rx_cnt;
-    current_rx_lost[i] = can_health[i].total_rx_lost_cnt;
-    current_can_resets[i] = can_health[i].can_core_reset_cnt;
-  }
-  return wake_monitor_rx_snapshot_clean(wake_monitor_prepare_rx, current_rx,
-                                        wake_monitor_prepare_rx_lost, current_rx_lost,
-                                        wake_monitor_prepare_can_resets, current_can_resets,
-                                        wake_monitor_prepare_rx_overflow, rx_buffer_overflow,
-                                        PANDA_CAN_CNT);
-}
-
-static bool wake_monitor_prepare_integrity_clean(void) {
-  uint32_t current_rx_lost[PANDA_CAN_CNT];
-  uint32_t current_can_resets[PANDA_CAN_CNT];
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    current_rx_lost[i] = can_health[i].total_rx_lost_cnt;
-    current_can_resets[i] = can_health[i].can_core_reset_cnt;
-  }
-  return wake_monitor_rx_integrity_clean(wake_monitor_prepare_rx_lost, current_rx_lost,
-                                         wake_monitor_prepare_can_resets, current_can_resets,
-                                         wake_monitor_prepare_rx_overflow, rx_buffer_overflow,
-                                         PANDA_CAN_CNT);
-}
-
-static void wake_monitor_prepare(uint32_t transaction, bool committed) {
-  wake_monitor_reset_runtime();
-  wake_debug_active_can_reset();
-  wake_monitor_enabled = true;
-  wake_monitor_committed = committed;
-  wake_monitor_status.magic = WAKE_MONITOR_STATUS_MAGIC;
-  wake_monitor_status.transaction = transaction;
-  wake_monitor_status.committed_host_session = committed ? wake_monitor_status.host_session : 0U;
-  wake_monitor_status.state = committed ? WAKE_MONITOR_STATE_COMMITTED : WAKE_MONITOR_STATE_PREPARED;
-  wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-  wake_monitor_status.trigger_stage = 0U;
-  wake_can_trace_reset();
-  wake_journal_begin_cycle();
-  wake_debug_clear_success();
-  // PREPARE only enables and verifies RX. It must not reinitialize FDCAN or
-  // change safety mode while the host is still checking the transaction.
-  set_power_save_state(false);
-  enable_can_transceivers(true);
-  wake_monitor_prepared_host_session = wake_monitor_status.host_session;
-  wake_monitor_capture_prepare_snapshot();
-  wake_monitor_can_armed = committed;
-  wake_monitor_status.reserved = wake_monitor_prepare_flags(wake_monitor_can_health_ready(),
-                                                            wake_monitor_prepared_host_session);
-  if (committed) {
-    wake_monitor_committed = true;
-    set_safety_mode(SAFETY_SILENT, 0U);
-    if (!wake_monitor_can_health_ready() || !wake_monitor_prepare_snapshot_clean()) {
-      wake_monitor_committed = false;
-      wake_monitor_can_armed = false;
-      wake_monitor_prepare_dirty = true;
-      wake_monitor_status.state = WAKE_MONITOR_STATE_PREPARED;
-      wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
-    } else {
-      offline_wake_active_can_exti_arm();
-      offline_wake_active_can_diag_snapshot(false);
-    }
-  }
-  #ifdef ALLOW_DEBUG
-  stop_mode_requested = false;
-  #endif
-  wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
-}
 
 static int get_health_pkt(void *dat) {
   COMPILE_TIME_ASSERT(sizeof(struct health_t) <= USBPACKET_MAX_SIZE);
@@ -232,92 +100,14 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[1] = ((fan_state.rpm & 0xFF00U) >> 8U);
       resp_len = 2;
       break;
-    // **** 0xb5: legacy one-phase wake monitor arm
-    case PANDA_REQUEST_ENABLE_WAKE_MONITOR:
-      wake_monitor_prepare(UINT32_MAX, true);
+    // **** 0xb5: request deep sleep, wakes on CAN or SBU
+    #ifdef ALLOW_DEBUG
+    case 0xb5:
+      set_safety_mode(SAFETY_SILENT, 0U);
+      set_power_save_state(true);
+      stop_mode_requested = true;
       break;
-    // **** 0xb7: non-triggering wake monitor preparation
-    case PANDA_REQUEST_PREPARE_WAKE_MONITOR: {
-      const uint32_t transaction = wake_monitor_request_transaction(req);
-      const wake_monitor_prepare_action_t action = wake_monitor_prepare_action(
-        wake_monitor_status.state, wake_monitor_status.transaction, transaction);
-      if (action == WAKE_MONITOR_PREPARE_START) {
-        wake_monitor_prepare(transaction, false);
-      }
-      break;
-    }
-    // **** 0xb8: final handoff after manager cleanup
-    case PANDA_REQUEST_COMMIT_WAKE_MONITOR: {
-      const uint32_t transaction = wake_monitor_request_transaction(req);
-      if (wake_monitor_commit_allowed(wake_monitor_status.state, wake_monitor_status.transaction, transaction,
-                                      wake_monitor_prepared_host_session, wake_monitor_status.host_session,
-                                      wake_monitor_prepare_dirty,
-                                      wake_monitor_can_health_ready() && wake_monitor_prepare_snapshot_clean())) {
-        wake_monitor_committed = true;
-        wake_monitor_can_armed = false;
-        set_safety_mode(SAFETY_SILENT, 0U);
-        if (wake_monitor_can_health_ready() && wake_monitor_prepare_snapshot_clean()) {
-          wake_monitor_can_armed = true;
-          wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
-          wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
-          wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-          wake_monitor_status.reserved = wake_monitor_prepare_flags(true, wake_monitor_status.host_session);
-          offline_wake_active_can_exti_arm();
-          offline_wake_active_can_diag_snapshot(false);
-          current_board->set_bootkick(BOOT_STANDBY);
-          wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
-        } else {
-          wake_monitor_committed = false;
-          wake_monitor_prepare_dirty = true;
-          wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY |
-            (wake_monitor_can_health_ready() ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U);
-        }
-      } else {
-        wake_monitor_status.reserved =
-          (wake_monitor_prepare_dirty ? WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY : 0U) |
-          (wake_monitor_can_health_ready() ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U);
-      }
-      break;
-    }
-    // **** 0xb9: cancel one matching shutdown transaction
-    case PANDA_REQUEST_ABORT_WAKE_MONITOR: {
-      const uint32_t transaction = wake_monitor_request_transaction(req);
-      if ((transaction != 0U) && (transaction == wake_monitor_status.transaction)) {
-        wake_journal_abort_cycle();
-        wake_monitor_reset_runtime();
-        wake_monitor_enabled = false;
-        wake_monitor_committed = false;
-        wake_monitor_status.transaction = 0U;
-        wake_monitor_status.committed_host_session = 0U;
-        wake_monitor_status.state = WAKE_MONITOR_STATE_IDLE;
-        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-        wake_monitor_status.trigger_stage = 0U;
-      }
-      break;
-    }
-    // **** 0xba: identify the current Linux boot session
-    case PANDA_REQUEST_SET_HOST_SESSION:
-      wake_monitor_status.host_session = wake_monitor_request_transaction(req);
-      break;
-    // **** 0xec: arm a receive-only PB12/PB5 observer without BOOTKICK
-    case PANDA_REQUEST_ARM_WAKE_OBSERVER:
-      wake_monitor_observer_enabled = false;
-      offline_wake_raw_can_exti_disarm();
-      set_power_save_state(false);
-      enable_can_transceivers(true);
-      wake_monitor_observer_enabled = true;
-      offline_wake_active_can_exti_arm();
-      offline_wake_active_can_diag_snapshot(true);
-      break;
-    // **** 0xed: stop observing without clearing the captured RTC evidence
-    case PANDA_REQUEST_DISARM_WAKE_OBSERVER:
-      wake_monitor_observer_enabled = false;
-      offline_wake_raw_can_exti_disarm();
-      break;
-    // **** 0xb6: schedule bootkick test after N seconds
-    case 0xb6:
-      bootkick_debug_schedule(req->param1);
-      break;
+    #endif
     // **** 0xc0: reset communications state
     case 0xc0:
       comms_can_reset();
@@ -420,53 +210,6 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
         int code_len = _app_start[0];
         (void)memcpy(resp, &code[code_len + 64], resp_len);
       }
-      break;
-    // **** 0xd5: get wake debug packet
-    case PANDA_REQUEST_GET_WAKE_DEBUG:
-      COMPILE_TIME_ASSERT(sizeof(wake_debug_t) <= USBPACKET_MAX_SIZE);
-      resp_len = sizeof(wake_debug);
-      (void)memcpy(resp, (uint8_t*)(&wake_debug), resp_len);
-      break;
-    // **** 0xd7: clear latched offline wake success
-    case PANDA_REQUEST_CLEAR_WAKE_SUCCESS:
-      wake_debug_clear_success();
-      break;
-    // **** 0xd9: get latched offline wake success
-    case PANDA_REQUEST_GET_WAKE_SUCCESS:
-      COMPILE_TIME_ASSERT(sizeof(wake_success_t) <= USBPACKET_MAX_SIZE);
-      resp_len = sizeof(wake_success);
-      (void)memcpy(resp, (uint8_t*)(&wake_success), resp_len);
-      break;
-    // **** 0xda: get persistent CAN wake trace
-    case PANDA_REQUEST_GET_WAKE_CAN_TRACE:
-      COMPILE_TIME_ASSERT(sizeof(wake_can_trace_t) <= USBPACKET_MAX_SIZE);
-      COMPILE_TIME_ASSERT((WAKE_DEBUG_WORDS + WAKE_SUCCESS_WORDS + WAKE_CAN_TRACE_WORDS) <= 32U);
-      resp_len = sizeof(wake_can_trace);
-      (void)memcpy(resp, (uint8_t*)(&wake_can_trace), resp_len);
-      break;
-    // **** 0xe9: get append-only wake journal state
-    case PANDA_REQUEST_GET_WAKE_JOURNAL_INFO: {
-      const wake_journal_info_t info = wake_journal_get_info();
-      COMPILE_TIME_ASSERT(sizeof(wake_journal_info_t) <= USBPACKET_MAX_SIZE);
-      resp_len = sizeof(info);
-      (void)memcpy(resp, (const uint8_t *)&info, resp_len);
-      break;
-    }
-    // **** 0xea: read one raw 32-byte wake journal slot
-    case PANDA_REQUEST_GET_WAKE_JOURNAL_RECORD: {
-      wake_journal_record_t record;
-      COMPILE_TIME_ASSERT(sizeof(wake_journal_record_t) <= USBPACKET_MAX_SIZE);
-      if (wake_journal_get_record(req->param1, &record)) {
-        resp_len = sizeof(record);
-        (void)memcpy(resp, (const uint8_t *)&record, resp_len);
-      }
-      break;
-    }
-    // **** 0xeb: read transaction/session state
-    case PANDA_REQUEST_GET_WAKE_MONITOR_STATUS:
-      COMPILE_TIME_ASSERT(sizeof(wake_monitor_status_t) <= USBPACKET_MAX_SIZE);
-      resp_len = sizeof(wake_monitor_status);
-      (void)memcpy(resp, (const uint8_t *)&wake_monitor_status, resp_len);
       break;
     // **** 0xd6: get version
     case 0xd6:

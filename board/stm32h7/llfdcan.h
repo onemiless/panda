@@ -144,23 +144,6 @@ void llcan_irq_enable(const FDCAN_GlobalTypeDef *FDCANx) {
   }
 }
 
-bool llcan_rx_ready(const FDCAN_GlobalTypeDef *FDCANx) {
-  IRQn_Type rx_irq = NonMaskableInt_IRQn;
-  if (FDCANx == FDCAN1) {
-    rx_irq = FDCAN1_IT0_IRQn;
-  } else if (FDCANx == FDCAN2) {
-    rx_irq = FDCAN2_IT0_IRQn;
-  } else if (FDCANx == FDCAN3) {
-    rx_irq = FDCAN3_IT0_IRQn;
-  } else {
-  }
-  return (rx_irq != NonMaskableInt_IRQn) && (NVIC_GetEnableIRQ(rx_irq) != 0U) &&
-         ((FDCANx->CCCR & FDCAN_CCCR_INIT) == 0U) &&
-         ((FDCANx->ILE & FDCAN_ILE_EINT0) != 0U) &&
-         ((FDCANx->IE & FDCAN_IE_RF0NE) != 0U) &&
-         ((FDCANx->ILS & FDCAN_ILS_RF0NL) == 0U);
-}
-
 bool llcan_init(FDCAN_GlobalTypeDef *FDCANx) {
   uint32_t can_number = CAN_NUM_FROM_CANIF(FDCANx);
   bool ret = fdcan_request_init(FDCANx);

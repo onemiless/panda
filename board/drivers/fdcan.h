@@ -1,83 +1,6 @@
 #include "board/drivers/drivers.h"
-#include "board/drivers/offline_wake_source_policy.h"
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
-
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-static bool wake_debug_gpio_is_alternate(GPIO_TypeDef *gpio, uint8_t pin, uint8_t alternate) {
-  const uint32_t mode = (gpio->MODER >> (pin * 2U)) & 0x3U;
-  const uint32_t af = (gpio->AFR[pin / 8U] >> ((pin % 8U) * 4U)) & 0xFU;
-  return (mode == MODE_ALTERNATE) && (af == alternate);
-}
-
-static bool wake_debug_gpio_output_is_low(GPIO_TypeDef *gpio, uint8_t pin) {
-  const uint32_t mode = (gpio->MODER >> (pin * 2U)) & 0x3U;
-  return (mode == MODE_OUTPUT) && ((gpio->ODR & (1UL << pin)) == 0U);
-}
-
-static bool wake_monitor_tres_can_io_ready(void) {
-  if (hw_type != HW_TYPE_TRES) {
-    return true;
-  }
-  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
-  const bool oriented_rx = flipped ?
-    wake_debug_gpio_is_alternate(GPIOB, 12U, GPIO_AF9_FDCAN2) :
-    wake_debug_gpio_is_alternate(GPIOB, 5U, GPIO_AF9_FDCAN2);
-  const bool oriented_transceiver = flipped ?
-    wake_debug_gpio_output_is_low(GPIOB, 11U) :
-    wake_debug_gpio_output_is_low(GPIOB, 10U);
-  return wake_debug_gpio_is_alternate(GPIOB, 8U, GPIO_AF9_FDCAN1) &&
-         wake_debug_gpio_is_alternate(GPIOG, 9U, GPIO_AF2_FDCAN3) &&
-         oriented_rx && oriented_transceiver &&
-         wake_debug_gpio_output_is_low(GPIOG, 11U) &&
-         wake_debug_gpio_output_is_low(GPIOD, 7U);
-}
-
-static void wake_debug_active_can_arm_snapshot(void) {
-  wake_debug_active_can_reset();
-  // The GPIO/transceiver mapping below is specific to Tres. Other H7 boards
-  // enter the existing STOP/EXTI path and must not expose a false snapshot.
-  if (hw_type != HW_TYPE_TRES) {
-    return;
-  }
-
-  wake_debug.pre_wfi_exti_pr1 = (FDCAN1->CCCR & 0xFFFFU) | ((FDCAN2->CCCR & 0xFFFFU) << 16U);
-  wake_debug.post_wfi_exti_pr1 = 0U;
-  wake_debug.exti_imr1 = FDCAN3->CCCR;
-  wake_debug.exti_rtsr1 = FDCAN1->IE;
-  wake_debug.exti_ftsr1 = FDCAN2->IE;
-  wake_debug.exti_emr1 = FDCAN3->IE;
-
-  uint32_t io = 0U;
-  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 5U, GPIO_AF9_FDCAN2) << 0U;
-  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 12U, GPIO_AF9_FDCAN2) << 1U;
-  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 8U, GPIO_AF9_FDCAN1) << 2U;
-  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOG, 9U, GPIO_AF2_FDCAN3) << 3U;
-  io |= (uint32_t)wake_debug_gpio_output_is_low(GPIOB, 10U) << 4U;
-  io |= (uint32_t)wake_debug_gpio_output_is_low(GPIOB, 11U) << 5U;
-  io |= (uint32_t)wake_debug_gpio_output_is_low(GPIOG, 11U) << 6U;
-  io |= (uint32_t)wake_debug_gpio_output_is_low(GPIOD, 7U) << 7U;
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    io |= (uint32_t)llcan_rx_ready(cans[i]) << (WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT + i);
-  }
-  const IRQn_Type rx_irqs[PANDA_CAN_CNT] = {
-    FDCAN1_IT0_IRQn,
-    FDCAN2_IT0_IRQn,
-    FDCAN3_IT0_IRQn,
-  };
-  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-    io |= (uint32_t)(NVIC_GetEnableIRQ(rx_irqs[i]) != 0U) <<
-          (WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT + i);
-    io |= (uint32_t)((cans[i]->ILE & FDCAN_ILE_EINT0) != 0U) <<
-          (WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT + i);
-    io |= (uint32_t)((cans[i]->ILS & FDCAN_ILS_RF0NL) == 0U) <<
-          (WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT + i);
-  }
-  io |= (uint32_t)can_silent << WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT;
-  wake_debug.enter_count = wake_active_can_diag_make(io);
-  wake_debug_active_can_save_arm_snapshot();
-}
-#endif
 
 static bool can_set_speed(uint8_t can_number) {
   bool ret = true;
@@ -299,51 +222,8 @@ void can_rx(uint8_t can_number) {
     safety_rx_invalid += safety_rx_hook(&to_push) ? 0U : 1U;
     ignition_can_hook(&to_push);
 
-    #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    if (wake_monitor_enabled && !wake_monitor_committed &&
-        (wake_monitor_status.state == WAKE_MONITOR_STATE_PREPARED)) {
-      // Any vehicle traffic after PREPARE invalidates the host's quiet
-      // snapshot. COMMIT must refuse this transaction instead of silently
-      // arming from a stale 300-second gate.
-      wake_monitor_prepare_dirty = true;
-      wake_monitor_status.reserved |= WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
-    }
-
-    // After a clean COMMIT, any hardware-validated frame from a physical CAN
-    // controller is sufficient. Latch the wake event before any diagnostic
-    // RTC write so diagnostics cannot delay or suppress the wake path.
-    const bool physical_wake_ready = offline_wake_physical_bus_rx_ready(
-          wake_monitor_enabled, wake_monitor_committed, wake_monitor_can_armed,
-          wake_monitor_can_wake_requested, can_number);
-    const bool first_activity = physical_wake_ready && !wake_monitor_can_activity_pending;
-    if (physical_wake_ready) {
-      wake_monitor_can_activity_pending = true;
-    }
-
-    const bool production_wake_diag = wake_monitor_enabled && wake_monitor_committed &&
-                                      wake_monitor_can_armed && (can_number < PANDA_CAN_CNT);
-    if (production_wake_diag) {
-      // Continue sampling after the first wake request so a multi-second wake
-      // cluster produces a full one-second peak instead of a partial window.
-      wake_can_trace_record_rx(can_number);
-    }
-    if (production_wake_diag || wake_monitor_observer_enabled) {
-      wake_debug_active_can_first_rx(can_number, to_push.addr);
-    }
-    if (first_activity) {
-      wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
-                               GET_LEN(&to_push), to_push.addr, to_push.data);
-    }
-    #endif
-
-    bool queue_for_host = true;
-    #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-    queue_for_host = !wake_monitor_enabled || !wake_monitor_committed;
-    #endif
-    if (queue_for_host) {
-      led_set(LED_BLUE, true);
-      rx_buffer_overflow += can_push(&can_rx_q, &to_push) ? 0U : 1U;
-    }
+    led_set(LED_BLUE, true);
+    rx_buffer_overflow += can_push(&can_rx_q, &to_push) ? 0U : 1U;
 
     // Enable CAN FD and BRS if CAN FD message was received
     if (!(bus_config[can_number].canfd_enabled) && (canfd_frame)) {
@@ -363,55 +243,13 @@ void can_rx(uint8_t can_number) {
   }
 }
 
-static void FDCAN1_IT0_IRQ_Handler(void) {
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
-                                wake_monitor_observer_enabled;
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_entry(0U);
-  }
-#endif
-  can_rx(0U);
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_flush(0U);
-  }
-#endif
-}
+static void FDCAN1_IT0_IRQ_Handler(void) { can_rx(0); }
 static void FDCAN1_IT1_IRQ_Handler(void) { process_can(0); }
 
-static void FDCAN2_IT0_IRQ_Handler(void) {
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
-                                wake_monitor_observer_enabled;
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_entry(1U);
-  }
-#endif
-  can_rx(1U);
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_flush(1U);
-  }
-#endif
-}
+static void FDCAN2_IT0_IRQ_Handler(void) { can_rx(1); }
 static void FDCAN2_IT1_IRQ_Handler(void) { process_can(1); }
 
-static void FDCAN3_IT0_IRQ_Handler(void) {
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
-                                wake_monitor_observer_enabled;
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_entry(2U);
-  }
-#endif
-  can_rx(2U);
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  if (wake_diag_active) {
-    wake_debug_active_can_irq_flush(2U);
-  }
-#endif
-}
+static void FDCAN3_IT0_IRQ_Handler(void) { can_rx(2);  }
 static void FDCAN3_IT1_IRQ_Handler(void) { process_can(2); }
 
 bool can_init(uint8_t can_number) {

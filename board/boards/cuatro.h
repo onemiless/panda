@@ -38,10 +38,7 @@ static void cuatro_set_fan_enabled(bool enabled) {
 }
 
 static void cuatro_set_bootkick(BootState state) {
-  // Keep BOOTKICK asserted while releasing DC_IN so the PMIC sees an
-  // unambiguous rising edge before the SoM boot request is released.
-  bool bootkick_asserted = (state == BOOT_BOOTKICK) || (state == BOOT_WAKE_RELEASE);
-  set_gpio_output(GPIOA, 0, !bootkick_asserted);
+  set_gpio_output(GPIOA, 0, state != BOOT_BOOTKICK);
   // DC_IN rising edge wakes SOM from ship mode
   set_gpio_output(GPIOC, 11, state != BOOT_BOOTKICK);
 }

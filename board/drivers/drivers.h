@@ -3,7 +3,6 @@
 #include "board/can.h"
 #include "board/health.h"
 #include "board/crc.h"
-#include "board/wake_protocol.h"
 #ifdef STM32H7
 #include "board/stm32h7/lladc_declarations.h"
 #endif
@@ -13,10 +12,6 @@
 extern bool bootkick_reset_triggered;
 
 void bootkick_tick(bool ignition, bool recent_heartbeat);
-void bootkick_request_reset_pulse(void);
-bool bootkick_request_wake_pulse(uint32_t stage);
-void bootkick_cancel_wake_pulse(void);
-void bootkick_clear_wake_confirmation(void);
 
 // ******************** can_common ********************
 
@@ -50,30 +45,8 @@ extern can_health_t can_health[PANDA_CAN_CNT];
 extern bool ignition_can;
 extern uint32_t ignition_can_cnt;
 
-extern volatile bool wake_monitor_enabled;
-extern volatile bool wake_monitor_observer_enabled;
-extern volatile bool wake_monitor_can_activity_pending;
-extern volatile bool wake_monitor_can_wake_requested;
-extern volatile bool wake_monitor_can_dispatch_pending;
-extern volatile uint32_t wake_monitor_can_dispatch_stage;
-extern volatile bool wake_monitor_som_off_seen;
-extern volatile bool wake_monitor_som_off_ready;
-extern volatile uint8_t wake_monitor_som_off_countdown;
-extern volatile bool wake_monitor_can_armed;
-extern volatile bool wake_monitor_strict_stop_pending;
-extern volatile bool wake_monitor_committed;
-extern volatile bool wake_monitor_prepare_dirty;
-extern volatile uint32_t wake_monitor_prepared_host_session;
-extern volatile uint32_t wake_monitor_prepare_rx[PANDA_CAN_CNT];
-extern volatile uint32_t wake_monitor_prepare_rx_lost[PANDA_CAN_CNT];
-extern volatile uint32_t wake_monitor_prepare_can_resets[PANDA_CAN_CNT];
-extern volatile uint32_t wake_monitor_prepare_rx_overflow;
-extern volatile uint8_t wake_monitor_failure_cooldown;
-extern volatile wake_monitor_status_t wake_monitor_status;
 extern bool can_silent;
 extern bool can_loopback;
-
-void wake_monitor_attempt_failed(void);
 
 // ******************* functions prototypes *********************
 bool can_init(uint8_t can_number);

@@ -48,7 +48,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-"panda.board" = ["health.h", "wake_protocol.h"]
+"panda.board" = ["health.h"]
 "panda.board.jungle" = ["jungle_health.h"]
 
 [tool.setuptools.package-dir]
