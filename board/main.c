@@ -259,7 +259,6 @@ static void tick_handler(void) {
               // that arrived while Linux was still powering down.
               wake_monitor_som_off_ready = true;
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
-              offline_wake_active_can_diag_snapshot(false);
               wake_debug_stage(0x3FU);
             }
           } else {

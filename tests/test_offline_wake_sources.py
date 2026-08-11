@@ -175,7 +175,9 @@ def test_tres_keeps_proven_fdcan_af_irq_and_exti_state_after_som_off():
   som_ready = main_source.split("// CAN has been armed since COMMIT", 1)[1].split("wake_debug_stage(0x3FU);", 1)[0]
   assert "llcan_irq_disable" not in som_ready
   assert "set_gpio_mode" not in som_ready
-  assert "offline_wake_active_can_diag_snapshot(false);" in som_ready
+  # COMMIT already captured the stable AF/IRQ configuration. Re-snapshotting
+  # here would erase an IRQ/first frame latched while Linux was shutting down.
+  assert "offline_wake_active_can_diag_snapshot(false);" not in som_ready
 
   heartbeat_cleanup = main_source.split("if (wake_monitor_enabled && (heartbeat_result !=", 1)[1].split(
     "wake_debug_stage(0x38U);", 1
@@ -236,8 +238,8 @@ def test_wake_monitor_keeps_fdcan_active_after_host_shutdown():
   )[0]
 
   # The host is genuinely powered off, but panda must remain in receive-only
-  # mode until SoM-off is confirmed. Entering STOP would make the active CAN
-  # and GPIO handoff paths unreachable.
+  # mode until SoM-off is confirmed. Entering STOP would make the active FDCAN
+  # and EXTI receive paths unreachable.
   assert "offline_wake_policy_after_heartbeat_loss(hw_type == HW_TYPE_TRES)" in heartbeat_transition
   assert "if (policy.keep_can_active)" in heartbeat_transition
   assert "wake_monitor_can_armed = false" not in heartbeat_transition
@@ -334,7 +336,6 @@ def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():
 
 def test_commit_rechecks_fdcan_after_silent_transition_and_offline_faults_self_rescue():
   comms = (PANDA_ROOT / "board/main_comms.h").read_text()
-  power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
   commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
   main_source = (PANDA_ROOT / "board/main.c").read_text()
 
