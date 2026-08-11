@@ -172,11 +172,11 @@ static void tick_handler(void) {
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {
       const uint8_t old_harness_status = prev_harness_status;
-      const bool gpio_exti_was_active = wake_monitor_gpio_exti_active;
-      if (gpio_exti_was_active) {
-        // Restore the previously oriented RX pin before changing orientation;
-        // otherwise the old pin would remain disconnected after host return.
-        offline_wake_active_can_gpio_restore();
+      const bool fdcan2_irq_was_quiesced = wake_monitor_fdcan2_irq_quiesced;
+      if (fdcan2_irq_was_quiesced) {
+        // Restore delivery before reinitializing the controller for the new
+        // harness orientation, then quiesce it again for the offline monitor.
+        offline_wake_active_can_irq_restore();
       }
       prev_harness_status = harness.status;
       can_set_orientation(harness.status == HARNESS_STATUS_FLIPPED);
@@ -185,10 +185,8 @@ static void tick_handler(void) {
       can_init_all();
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
-      if (gpio_exti_was_active) {
-        // CAN initialization restores AF pins. Reapply the offline GPIO input
-        // if harness orientation changes while the SoM is absent.
-        offline_wake_active_can_gpio_enable();
+      if (fdcan2_irq_was_quiesced) {
+        offline_wake_active_can_irq_quiesce();
       }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready &&
@@ -268,7 +266,7 @@ static void tick_handler(void) {
               // CAN has been armed since COMMIT. This transition only decides
               // when BOOTKICK may be dispatched; it must never clear an event
               // that arrived while Linux was still powering down.
-              offline_wake_active_can_gpio_enable();
+              offline_wake_active_can_irq_quiesce();
               wake_monitor_som_off_ready = true;
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
               offline_wake_active_can_diag_snapshot(false);
@@ -395,7 +393,7 @@ static void tick_handler(void) {
         wake_monitor_committed, wake_monitor_som_off_seen && recent_heartbeat,
         wake_monitor_status.host_session, wake_monitor_status.committed_host_session, wake_attempted);
       if (wake_monitor_enabled && (heartbeat_result != WAKE_MONITOR_HEARTBEAT_IGNORE)) {
-        offline_wake_active_can_gpio_restore();
+        offline_wake_active_can_irq_restore();
         offline_wake_raw_can_exti_disarm();
         can_clear(&can_rx_q);
         wake_monitor_enabled = false;

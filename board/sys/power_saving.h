@@ -46,8 +46,7 @@ volatile bool stop_mode_requested = false;
 static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
 static volatile uint32_t wake_monitor_primary_can_exti_line = 0U;
 volatile bool wake_monitor_observer_enabled = false;
-static volatile bool wake_monitor_gpio_exti_active = false;
-static volatile uint8_t wake_monitor_gpio_exti_pin = 0U;
+static volatile bool wake_monitor_fdcan2_irq_quiesced = false;
 
 static void offline_wake_raw_can_exti_disarm(void) {
   const uint32_t lines = wake_monitor_raw_can_exti_lines;
@@ -92,47 +91,35 @@ static void offline_wake_active_can_exti_arm(void) {
   NVIC_EnableIRQ(primary_irq);
 }
 
-static void offline_wake_active_can_gpio_enable(void) {
-  if (hw_type != HW_TYPE_TRES) {
+static void offline_wake_active_can_irq_quiesce(void) {
+  if ((hw_type != HW_TYPE_TRES) || wake_monitor_fdcan2_irq_quiesced) {
     return;
   }
 
-  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
-  const uint8_t pin = flipped ? 12U : 5U;
-  // The EXTI path was armed at COMMIT while FDCAN was still decoding. Once
-  // Linux is confirmed absent, detach only the proven FDCAN2 RX pin from its
-  // peripheral so the asynchronous GPIO edge remains observable in shallow
-  // WFI. Do not clear EXTI pending here: an edge racing this transition must
-  // be delivered, not discarded.
+  // The successful online observer kept the oriented PB5/PB12 RX pin in its
+  // FDCAN alternate function while EXTI observed the same electrical edge.
+  // Preserve that proven pin state offline. Only mask FDCAN2's own handlers so
+  // an undrained FIFO cannot create an interrupt-rate fault after pandad exits.
   llcan_irq_disable(cans[1]);
   NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
   NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
-  set_gpio_mode(GPIOB, flipped ? 12U : 5U, MODE_INPUT);
-  wake_monitor_gpio_exti_pin = pin;
-  wake_monitor_gpio_exti_active = true;
+  wake_monitor_fdcan2_irq_quiesced = true;
 }
 
-static void offline_wake_active_can_gpio_restore(void) {
-  if ((hw_type == HW_TYPE_TRES) && wake_monitor_gpio_exti_active) {
-    const uint8_t pin = wake_monitor_gpio_exti_pin;
-    if ((pin == 5U) || (pin == 12U)) {
-      set_gpio_alternate(GPIOB, pin, GPIO_AF9_FDCAN2);
-      // With the RX pin detached, FDCAN2 can latch error/RX interrupt flags
-      // without a valid frame. Clear both the peripheral and NVIC state before
-      // restoring its normal IRQ path, otherwise the stale level can create an
-      // interruptRateCan2 storm and trigger Panda's fail-safe SoM wake.
-      FDCAN2->IR = 0xFFFFFFFFU;
-      NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
-      NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
-      llcan_irq_enable(cans[1]);
-    }
+static void offline_wake_active_can_irq_restore(void) {
+  if ((hw_type == HW_TYPE_TRES) && wake_monitor_fdcan2_irq_quiesced) {
+    // Clear peripheral and NVIC state accumulated while pandad was absent
+    // before restoring normal FDCAN2 delivery to the returned host.
+    FDCAN2->IR = 0xFFFFFFFFU;
+    NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
+    NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
+    llcan_irq_enable(cans[1]);
   }
-  wake_monitor_gpio_exti_active = false;
-  wake_monitor_gpio_exti_pin = 0U;
+  wake_monitor_fdcan2_irq_quiesced = false;
 }
 
-static bool offline_wake_active_can_gpio_ready(void) {
-  if (!wake_monitor_gpio_exti_active || (hw_type != HW_TYPE_TRES)) {
+static bool offline_wake_active_can_irq_quiesced_ready(void) {
+  if (!wake_monitor_fdcan2_irq_quiesced || (hw_type != HW_TYPE_TRES)) {
     return false;
   }
   const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
@@ -145,10 +132,12 @@ static bool offline_wake_active_can_gpio_ready(void) {
   const bool transceiver_ok = flipped ?
     wake_debug_gpio_output_is_low(GPIOB, 11U) :
     wake_debug_gpio_output_is_low(GPIOB, 10U);
-  return (wake_monitor_gpio_exti_pin == pin) && wake_debug_gpio_is_input(GPIOB, pin) &&
+  return wake_debug_gpio_is_alternate(GPIOB, pin, GPIO_AF9_FDCAN2) &&
          transceiver_ok && mapping_ok && ((EXTI->IMR1 & line) != 0U) &&
          ((EXTI->RTSR1 & line) != 0U) && ((EXTI->FTSR1 & line) != 0U) &&
-         (NVIC_GetEnableIRQ(irq) != 0U);
+         (NVIC_GetEnableIRQ(irq) != 0U) &&
+         (NVIC_GetEnableIRQ(FDCAN2_IT0_IRQn) == 0U) &&
+         (NVIC_GetEnableIRQ(FDCAN2_IT1_IRQn) == 0U);
 }
 
 static void offline_wake_active_can_diag_snapshot(bool observer) {
@@ -171,7 +160,6 @@ static void offline_wake_active_can_diag_snapshot(bool observer) {
   flags |= (NVIC_GetEnableIRQ(primary_irq) != 0U) ? WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED : 0U;
   flags |= mapping_ok ? WAKE_ACTIVE_CAN_EXTI_MAPPING_OK : 0U;
   flags |= ((GPIOB->IDR & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH : 0U;
-  flags |= wake_monitor_gpio_exti_active ? WAKE_ACTIVE_CAN_EXTI_GPIO_MODE : 0U;
   wake_debug_active_can_exti_arm(flags);
 }
 

@@ -10,10 +10,6 @@ static bool wake_debug_gpio_is_alternate(GPIO_TypeDef *gpio, uint8_t pin, uint8_
   return (mode == MODE_ALTERNATE) && (af == alternate);
 }
 
-static bool wake_debug_gpio_is_input(GPIO_TypeDef *gpio, uint8_t pin) {
-  return ((gpio->MODER >> (pin * 2U)) & 0x3U) == MODE_INPUT;
-}
-
 static bool wake_debug_gpio_output_is_low(GPIO_TypeDef *gpio, uint8_t pin) {
   const uint32_t mode = (gpio->MODER >> (pin * 2U)) & 0x3U;
   return (mode == MODE_OUTPUT) && ((gpio->ODR & (1UL << pin)) == 0U);

@@ -102,7 +102,7 @@ def test_tres_active_monitor_keeps_fdcan_af_and_arms_primary_raw_edge_fallback()
   fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
 
   arm = power_source.split("static void offline_wake_active_can_exti_arm", 1)[1].split(
-    "static void offline_wake_active_can_gpio_enable", 1
+    "static void offline_wake_active_can_irq_quiesce", 1
   )[0]
   assert "offline_wake_oriented_fdcan2_exti_line" in arm
   assert "SYSCFG->EXTICR" in arm
@@ -161,37 +161,39 @@ def test_receive_only_observer_records_raw_exti_without_wake_or_bootkick():
   assert "wake_journal" not in observer_irq
 
 
-def test_tres_switches_oriented_fdcan2_rx_to_gpio_only_after_som_off_and_restores_af():
+def test_tres_keeps_oriented_fdcan2_rx_in_af_while_quiescing_irq_after_som_off():
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   comms_source = (PANDA_ROOT / "board/main_comms.h").read_text()
 
-  switch = power_source.split("static void offline_wake_active_can_gpio_enable", 1)[1].split(
-    "static void offline_wake_active_can_gpio_restore", 1
+  quiesce = power_source.split("static void offline_wake_active_can_irq_quiesce", 1)[1].split(
+    "static void offline_wake_active_can_irq_restore", 1
   )[0]
-  assert "llcan_irq_disable(cans[1]);" in switch
-  assert "set_gpio_mode(GPIOB, flipped ? 12U : 5U, MODE_INPUT);" in switch
-  assert switch.index("llcan_irq_disable(cans[1]);") < switch.index("set_gpio_mode(")
-  assert "llcan_irq_enable(cans[1]);" not in switch
-  assert "EXTI->PR1" not in switch
-  assert "can_init_all" not in switch
-  assert "set_safety_mode" not in switch
-  assert "bootkick" not in switch.lower()
+  assert "llcan_irq_disable(cans[1]);" in quiesce
+  assert "NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);" in quiesce
+  assert "NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);" in quiesce
+  assert "set_gpio_mode" not in quiesce
+  assert "set_gpio_alternate" not in quiesce
+  assert "llcan_irq_enable(cans[1]);" not in quiesce
+  assert "EXTI->PR1" not in quiesce
+  assert "can_init_all" not in quiesce
+  assert "set_safety_mode" not in quiesce
+  assert "bootkick" not in quiesce.lower()
 
-  restore = power_source.split("static void offline_wake_active_can_gpio_restore", 1)[1].split(
+  restore = power_source.split("static void offline_wake_active_can_irq_restore", 1)[1].split(
     "static void offline_wake_active_can_diag_snapshot", 1
   )[0]
-  assert "set_gpio_alternate(GPIOB, pin, GPIO_AF9_FDCAN2);" in restore
+  assert "set_gpio_alternate" not in restore
+  assert "set_gpio_mode" not in restore
   assert "FDCAN2->IR = 0xFFFFFFFFU;" in restore
   assert "NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);" in restore
   assert "NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);" in restore
   assert "llcan_irq_enable(cans[1]);" in restore
-  assert restore.index("set_gpio_alternate(") < restore.index("FDCAN2->IR = 0xFFFFFFFFU;")
   assert restore.index("FDCAN2->IR = 0xFFFFFFFFU;") < restore.index("llcan_irq_enable(cans[1]);")
   assert "can_init_all" not in restore
 
   som_ready = main_source.split("// CAN has been armed since COMMIT", 1)[1].split("wake_debug_stage(0x3FU);", 1)[0]
-  assert "offline_wake_active_can_gpio_enable();" in som_ready
+  assert "offline_wake_active_can_irq_quiesce();" in som_ready
   assert "offline_wake_active_can_diag_snapshot(false);" in som_ready
 
   heartbeat_cleanup = main_source.split("if (wake_monitor_enabled && (heartbeat_result !=", 1)[1].split(
@@ -200,20 +202,20 @@ def test_tres_switches_oriented_fdcan2_rx_to_gpio_only_after_som_off_and_restore
   reset_runtime = comms_source.split("static void wake_monitor_reset_runtime", 1)[1].split(
     "static bool wake_monitor_can_health_ready", 1
   )[0]
-  assert "offline_wake_active_can_gpio_restore();" in heartbeat_cleanup
-  assert "offline_wake_active_can_gpio_restore();" in reset_runtime
+  assert "offline_wake_active_can_irq_restore();" in heartbeat_cleanup
+  assert "offline_wake_active_can_irq_restore();" in reset_runtime
   assert "can_init_all();" not in heartbeat_cleanup
   assert "can_init_all();" not in reset_runtime
 
   harness_transition = main_source.split("if (harness.status != prev_harness_status)", 1)[1].split(
     "// decimated to 1Hz", 1
   )[0]
-  assert "const bool gpio_exti_was_active = wake_monitor_gpio_exti_active;" in harness_transition
-  assert harness_transition.index("offline_wake_active_can_gpio_restore();") < harness_transition.index(
+  assert "const bool fdcan2_irq_was_quiesced = wake_monitor_fdcan2_irq_quiesced;" in harness_transition
+  assert harness_transition.index("offline_wake_active_can_irq_restore();") < harness_transition.index(
     "can_set_orientation("
   )
   assert harness_transition.index("set_power_save_state(power_save_enabled);") < harness_transition.index(
-    "offline_wake_active_can_gpio_enable();"
+    "offline_wake_active_can_irq_quiesce();"
   )
 
 
@@ -354,6 +356,7 @@ def test_committed_wake_handoff_cannot_be_taken_out_of_silent_safety():
 
 def test_commit_rechecks_fdcan_after_silent_transition_and_offline_faults_self_rescue():
   comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
   commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
   main_source = (PANDA_ROOT / "board/main.c").read_text()
 
@@ -364,7 +367,12 @@ def test_commit_rechecks_fdcan_after_silent_transition_and_offline_faults_self_r
   offline_ready = comms.split("static bool wake_monitor_offline_source_ready", 1)[1].split(
     "static void wake_monitor_capture_prepare_snapshot", 1
   )[0]
-  assert "offline_wake_active_can_gpio_ready()" in offline_ready
+  assert "offline_wake_active_can_irq_quiesced_ready()" in offline_ready
+  irq_ready = power_source.split("static bool offline_wake_active_can_irq_quiesced_ready", 1)[1].split(
+    "static void offline_wake_active_can_diag_snapshot", 1
+  )[0]
+  assert "wake_debug_gpio_is_alternate" in irq_ready
+  assert "GPIO_AF9_FDCAN2" in irq_ready
   assert "if (i != 1U)" in offline_ready
   assert "llcan_rx_ready(CANIF_FROM_CAN_NUM(i))" in offline_ready
   assert "wake_monitor_offline_fault_ready(" in main_source
