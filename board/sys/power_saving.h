@@ -146,6 +146,9 @@ void set_power_save_state(bool enable) {
 }
 
 static void enter_stop_mode(void) {
+  // Active-FDCAN diagnostics reuse tagged legacy STOP fields only on Tres.
+  // Invalidate that view before these fields regain their STOP semantics.
+  wake_debug_active_can_reset();
   wake_debug.stage = 0x10U;
   wake_debug.enter_count += 1U;
   wake_debug_stage(0x11U);

@@ -1,16 +1,22 @@
 #pragma once
 
+#include <stddef.h>
+
 #include "board/wake_protocol.h"
+#include "board/drivers/wake_active_can_diag_policy.h"
 #include "board/drivers/wake_event_trace_policy.h"
 
 volatile wake_debug_t wake_debug;
 volatile wake_success_t wake_success;
 volatile wake_can_trace_t wake_can_trace;
 static volatile uint16_t wake_can_trace_rx_window[PANDA_CAN_CNT] = {0U, 0U, 0U};
+static volatile uint8_t wake_debug_active_can_irq_pending = 0U;
 
 #define WAKE_DEBUG_WORDS (sizeof(wake_debug_t) / sizeof(uint32_t))
 #define WAKE_SUCCESS_WORDS (sizeof(wake_success_t) / sizeof(uint32_t))
 #define WAKE_CAN_TRACE_WORDS (sizeof(wake_can_trace_t) / sizeof(uint32_t))
+#define WAKE_DEBUG_ACTIVE_CAN_TAG_WORD (offsetof(wake_debug_t, enter_count) / sizeof(uint32_t))
+#define WAKE_DEBUG_ACTIVE_CAN_FIRST_RX_WORD (offsetof(wake_debug_t, post_wfi_exti_pr1) / sizeof(uint32_t))
 
 #define WAKE_CAN_TRACE_FLAG_MONITOR_ENABLED (1U << 0U)
 #define WAKE_CAN_TRACE_FLAG_SOM_OFF_SEEN (1U << 1U)
@@ -36,6 +42,33 @@ static void wake_debug_save(void) {
   for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
     dst[i] = src[i];
   }
+}
+
+static void wake_debug_save_word(uint8_t word) {
+  if (word >= WAKE_DEBUG_WORDS) {
+    return;
+  }
+  wake_debug_enable_backup_domain();
+  const uint32_t *src = (const uint32_t *)(&wake_debug);
+  volatile uint32_t *dst = &(RTC->BKP0R);
+  dst[word] = src[word];
+}
+
+// The active snapshot tag is the commit marker. Invalidate it first, persist
+// every payload word, then publish the tag last. An asynchronous Panda reset
+// can therefore leave either the prior record or an invalid record, never a
+// valid marker paired with a partially written arm snapshot.
+static void wake_debug_active_can_save_arm_snapshot(void) {
+  wake_debug_enable_backup_domain();
+  const uint32_t *src = (const uint32_t *)(&wake_debug);
+  volatile uint32_t *dst = &(RTC->BKP0R);
+  dst[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD] = 0U;
+  for (uint8_t i = 0U; i < WAKE_DEBUG_WORDS; i++) {
+    if (i != WAKE_DEBUG_ACTIVE_CAN_TAG_WORD) {
+      dst[i] = src[i];
+    }
+  }
+  dst[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD] = src[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD];
 }
 
 static void wake_success_save(void) {
@@ -87,6 +120,9 @@ static void wake_can_trace_reset(void) {
   uint32_t *dst = (uint32_t *)(&wake_can_trace);
   for (uint8_t i = 0U; i < WAKE_CAN_TRACE_WORDS; i++) {
     dst[i] = 0U;
+  }
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    wake_can_trace_rx_window[i] = 0U;
   }
   wake_can_trace.magic = WAKE_CAN_TRACE_MAGIC;
   wake_can_trace.state = 0xFF000000U;
@@ -183,8 +219,9 @@ static void wake_can_trace_flush_rx_window(void) {
   bool changed = false;
   for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
     const uint16_t count = wake_can_trace_rx_window[i];
-    if (count > wake_can_trace_peak_rx(i)) {
-      wake_can_trace_set_peak_rx(i, count);
+    const uint16_t peak = wake_active_can_diag_peak(wake_can_trace_peak_rx(i), count);
+    if (peak != wake_can_trace_peak_rx(i)) {
+      wake_can_trace_set_peak_rx(i, peak);
       changed = true;
     }
     wake_can_trace_rx_window[i] = 0U;
@@ -194,11 +231,53 @@ static void wake_can_trace_flush_rx_window(void) {
   }
 }
 
+static void wake_debug_active_can_reset(void) {
+  if (wake_active_can_diag_valid(wake_debug.enter_count)) {
+    // enter_count is the tagged active-FDCAN snapshot only on Tres. Once the
+    // snapshot is invalidated it must not be exposed as a legacy STOP count.
+    wake_debug.enter_count = 0U;
+    wake_debug.pre_wfi_exti_pr1 = 0U;
+    wake_debug.post_wfi_exti_pr1 = 0U;
+    wake_debug.exti_imr1 = 0U;
+    wake_debug.exti_rtsr1 = 0U;
+    wake_debug.exti_ftsr1 = 0U;
+    wake_debug.exti_emr1 = 0U;
+  }
+  wake_debug_active_can_irq_pending = 0U;
+}
+
+static void wake_debug_active_can_irq_entry(uint8_t physical_bus) {
+  const uint32_t old_snapshot = wake_debug.enter_count;
+  const uint32_t new_snapshot = wake_active_can_diag_latch_irq(old_snapshot, physical_bus);
+  if (new_snapshot != old_snapshot) {
+    wake_debug.enter_count = new_snapshot;
+    wake_debug_active_can_irq_pending |= (uint8_t)(1U << physical_bus);
+  }
+}
+
+static void wake_debug_active_can_irq_flush(uint8_t physical_bus) {
+  if (physical_bus >= PANDA_CAN_CNT) {
+    return;
+  }
+  const uint8_t pending = (uint8_t)(1U << physical_bus);
+  if ((wake_debug_active_can_irq_pending & pending) != 0U) {
+    wake_debug_active_can_irq_pending &= (uint8_t)(~pending);
+    // Only the tagged flag word changed. A single RTC write keeps this
+    // one-shot diagnostic out of the CAN receive critical path as much as
+    // possible and does not touch Flash.
+    wake_debug_save_word(WAKE_DEBUG_ACTIVE_CAN_TAG_WORD);
+  }
+}
+
 static void wake_debug_active_can_first_rx(uint8_t physical_bus, uint32_t address) {
-  if ((wake_debug.post_wfi_exti_pr1 & (1UL << 31U)) == 0U) {
-    wake_debug.post_wfi_exti_pr1 = (1UL << 31U) |
-      (((uint32_t)physical_bus & 0x3U) << 29U) | (address & 0x1FFFFFFFU);
-    wake_debug_save();
+  if (wake_active_can_diag_valid(wake_debug.enter_count) &&
+      !wake_active_can_diag_first_rx_valid(wake_debug.post_wfi_exti_pr1)) {
+    wake_debug.post_wfi_exti_pr1 = wake_active_can_diag_pack_first_rx(physical_bus, address);
+    // The ISR entry bit was latched before can_rx(). Persist it together with
+    // the first validated frame, then suppress the handler's fallback save.
+    wake_debug_active_can_irq_pending = 0U;
+    wake_debug_save_word(WAKE_DEBUG_ACTIVE_CAN_FIRST_RX_WORD);
+    wake_debug_save_word(WAKE_DEBUG_ACTIVE_CAN_TAG_WORD);
   }
 }
 

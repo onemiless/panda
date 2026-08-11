@@ -45,7 +45,7 @@ static void wake_monitor_reset_runtime(void) {
 }
 
 static bool wake_monitor_can_health_ready(void) {
-  bool ready = (faults == 0U) && !power_save_enabled;
+  bool ready = (faults == 0U) && !power_save_enabled && wake_monitor_tres_can_io_ready();
   for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
     ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U) &&
              llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
@@ -93,6 +93,7 @@ static bool wake_monitor_prepare_integrity_clean(void) {
 
 static void wake_monitor_prepare(uint32_t transaction, bool committed) {
   wake_monitor_reset_runtime();
+  wake_debug_active_can_reset();
   wake_monitor_enabled = true;
   wake_monitor_committed = committed;
   wake_monitor_status.magic = WAKE_MONITOR_STATUS_MAGIC;
@@ -122,6 +123,8 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
       wake_monitor_prepare_dirty = true;
       wake_monitor_status.state = WAKE_MONITOR_STATE_PREPARED;
       wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
+    } else {
+      wake_debug_active_can_arm_snapshot();
     }
   }
   #ifdef ALLOW_DEBUG

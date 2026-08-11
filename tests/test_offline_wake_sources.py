@@ -321,14 +321,18 @@ def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_ch
   comms = (PANDA_ROOT / "board/main_comms.h").read_text()
   trace = (PANDA_ROOT / "board/drivers/wake_debug.h").read_text()
 
-  physical_rx = fdcan.split("if (offline_wake_physical_bus_rx_ready(", 1)[1].split(
+  offline_rx = fdcan.split("// After a clean COMMIT", 1)[1].split(
     "if (bootkick_tesla_event_should_latch(", 1
   )[0]
-  assert "wake_can_trace_record_rx(can_number);" in physical_rx
-  assert physical_rx.index("wake_can_trace_record_rx(can_number);") < physical_rx.index(
-    "wake_monitor_can_activity_pending = true;"
+  assert "wake_can_trace_record_rx(can_number);" in offline_rx
+  assert "wake_debug_active_can_first_rx(can_number, to_push.addr);" in offline_rx
+  assert offline_rx.index("wake_monitor_can_activity_pending = true;") < offline_rx.index(
+    "wake_can_trace_record_rx(can_number);"
   )
-  assert "wake_debug_active_can_first_rx(can_number, to_push.addr);" in physical_rx
+  sample_gate = offline_rx.split(
+    "if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed", 1
+  )[1].split("}", 1)[0]
+  assert "wake_monitor_can_wake_requested" not in sample_gate
 
   commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
   assert "wake_debug_active_can_arm_snapshot();" in commit_case
@@ -336,4 +340,28 @@ def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_ch
 
   assert "static void wake_can_trace_record_rx(uint8_t physical_bus)" in trace
   assert "static void wake_can_trace_flush_rx_window(void)" in trace
+  trace_reset = trace.split("static void wake_can_trace_reset(void)", 1)[1].split(
+    "static void wake_debug_init(void)", 1
+  )[0]
+  assert "wake_can_trace_rx_window[i] = 0U;" in trace_reset
+  arm_snapshot = fdcan.split("static void wake_debug_active_can_arm_snapshot(void)", 1)[1].split("#endif", 1)[0]
+  assert "WAKE_ACTIVE_CAN_DIAG_V1_MAGIC" in (PANDA_ROOT / "board/wake_protocol.h").read_text()
+  assert "wake_active_can_diag_make(io)" in arm_snapshot
+  assert "hw_type != HW_TYPE_TRES" in arm_snapshot
+  assert "can_exti_line" not in arm_snapshot
+  assert "wake_debug_gpio_output_is_low" in arm_snapshot
+  assert "FDCAN_ILS_RF0NL" in arm_snapshot
+  assert "FDCAN_ILS_RF0NL" in (PANDA_ROOT / "board/stm32h7/llfdcan.h").read_text()
+  assert "wake_monitor_tres_can_io_ready()" in comms
+  assert "wake_debug_active_can_irq_entry(1U);" in fdcan
+  assert fdcan.index("wake_debug_active_can_irq_entry(1U);") < fdcan.index("can_rx(1U);")
+  assert fdcan.index("can_rx(1U);") < fdcan.index("wake_debug_active_can_irq_flush(1U);")
+  arm_save = trace.split("static void wake_debug_active_can_save_arm_snapshot(void)", 1)[1].split(
+    "static void wake_success_save(void)", 1
+  )[0]
+  invalidate = "dst[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD] = 0U;"
+  publish = "dst[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD] = src[WAKE_DEBUG_ACTIVE_CAN_TAG_WORD];"
+  assert invalidate in arm_save
+  assert publish in arm_save
+  assert arm_save.index(invalidate) < arm_save.index("for (uint8_t i") < arm_save.index(publish)
   assert "wake_journal" not in trace

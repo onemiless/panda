@@ -68,12 +68,12 @@ def test_wake_packet_layouts_come_from_shared_header():
 def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
   first_rx = (1 << 31) | (1 << 29) | 0x122
   io = 0
-  for bit in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
+  for bit in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23):
     io |= 1 << bit
   payload = Panda.WAKE_DEBUG_STRUCT.pack(
-    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, 2, 0,
+    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC | io, 0,
     0x56781234, first_rx, 0x9ABC,
-    0x11111111, 0x22222222, 9, io, 0x33333333,
+    0x11111111, 0x22222222, 9, 0, 0x33333333,
     2, 0, 0, 1, 0, 0, 0, 0,
   )
   panda = object.__new__(Panda)
@@ -81,16 +81,46 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
 
   debug = panda.wake_debug()
 
+  assert debug["active_can_snapshot_valid"] is True
+  assert debug["active_can_snapshot_version"] == 1
+  assert debug["snapshot_kind"] == "activeFdcanV1"
+  assert debug["enter_count"] is None
+  assert debug["pre_wfi_exti_pr1"] is None
   assert debug["active_can_cccr"] == [0x1234, 0x5678, 0x9ABC]
   assert debug["active_can_ie"] == [0x11111111, 0x22222222, 0x33333333]
   assert debug["active_can_first_rx"] == {"bus": 1, "address": 0x122}
   assert debug["active_can_io"]["fdcan2_pb5_af"] is False
   assert debug["active_can_io"]["fdcan2_pb12_af"] is True
   assert debug["active_can_io"]["rx_ready"] == [True, True, True]
-  assert debug["active_can_io"]["rx_irq_enabled"] == [[True, True], [True, True], [True, True]]
+  assert debug["active_can_io"]["rx_irq_enabled"] == [True, True, True]
   assert debug["active_can_io"]["ile_enabled"] == [True, True, True]
+  assert debug["active_can_io"]["rx_fifo0_to_it0"] == [True, True, True]
   assert debug["active_can_io"]["safety_silent"] is True
-  assert debug["active_can_io"]["harness_flipped"] is True
+  assert debug["active_can_io"]["rx_irq_entry_seen"] == [True, True, True]
+  assert debug["bootkick_debug_waiting_countdown"] == 0
+  assert debug["bootkick_debug_hold_countdown"] == 0
+
+
+def test_wake_debug_does_not_misdecode_stop_mode_fields_as_active_can_snapshot():
+  payload = Panda.WAKE_DEBUG_STRUCT.pack(
+    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x16, 2, 0,
+    0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+    0xFFFFFFFF, 0xFFFFFFFF, 9, 0x7FFFFFFF, 0xFFFFFFFF,
+    2, 0, 0, 1, 0, 0, 0, 0,
+  )
+  panda = object.__new__(Panda)
+  panda._handle = FakeReadHandle(payload)
+
+  debug = panda.wake_debug()
+
+  assert debug["active_can_snapshot_valid"] is False
+  assert debug["active_can_snapshot_version"] is None
+  assert debug["snapshot_kind"] == "legacyOrStopExti"
+  assert debug["enter_count"] == 2
+  assert debug["active_can_cccr"] is None
+  assert debug["active_can_ie"] is None
+  assert debug["active_can_first_rx"] is None
+  assert debug["active_can_io"] is None
 
 
 def test_reset_reason_is_snapshotted_then_hardware_flags_are_cleared():

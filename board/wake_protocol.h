@@ -21,6 +21,16 @@
 #define WAKE_DEBUG_MAGIC 0x57414B48U
 #define WAKE_SUCCESS_MAGIC 0x57535543U
 #define WAKE_CAN_TRACE_MAGIC 0x57435452U
+#define WAKE_ACTIVE_CAN_DIAG_V1_MAGIC 0xA1000000U
+#define WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK 0xFF000000U
+#define WAKE_ACTIVE_CAN_DIAG_PAYLOAD_MASK 0x00FFFFFFU
+#define WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT 8U
+#define WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT 11U
+#define WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT 14U
+#define WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT 17U
+#define WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT 18U
+#define WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT 21U
+#define WAKE_ACTIVE_CAN_FIRST_RX_VALID 0x80000000U
 #define WAKE_JOURNAL_MAGIC 0x574A524EU
 #define WAKE_JOURNAL_VERSION 1U
 #define WAKE_JOURNAL_RECORD_SIZE 32U
@@ -73,6 +83,9 @@ typedef struct {
   uint8_t reserved;
 } wake_monitor_status_t;
 
+// On Tres, WAKE_ACTIVE_CAN_DIAG_V1_MAGIC tags wake_debug_t.enter_count and
+// the legacy EXTI words as one active-FDCAN snapshot. Without that exact tag,
+// those fields retain their STOP/EXTI meaning. can_exti_line is never overlaid.
 typedef struct {
   uint32_t magic;
   uint32_t boot_count;

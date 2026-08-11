@@ -165,6 +165,15 @@ class Panda:
   WAKE_MONITOR_ARMED_STAGE = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_WAKE_MONITOR_ARMED_STAGE")
   WAKE_MONITOR_STATUS_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_MONITOR_STATUS_MAGIC")
   WAKE_DEBUG_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_DEBUG_MAGIC")
+  WAKE_ACTIVE_CAN_DIAG_V1_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_V1_MAGIC")
+  WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK")
+  WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT")
+  WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT")
+  WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT")
+  WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT")
+  WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT")
+  WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT")
+  WAKE_ACTIVE_CAN_FIRST_RX_VALID = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_FIRST_RX_VALID")
   WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
   WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
   WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
@@ -633,22 +642,26 @@ class Panda:
   def wake_debug(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_DEBUG_REQUEST, 0, 0, self.WAKE_DEBUG_STRUCT.size)
     a = self.WAKE_DEBUG_STRUCT.unpack(dat)
+    active_can_snapshot_valid = (
+      a[4] & Panda.WAKE_ACTIVE_CAN_DIAG_MAGIC_MASK
+    ) == Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC
     first_rx = None
-    if a[7] & (1 << 31):
+    if active_can_snapshot_valid and (a[7] & Panda.WAKE_ACTIVE_CAN_FIRST_RX_VALID):
       first_rx = {"bus": (a[7] >> 29) & 0x3, "address": a[7] & 0x1FFFFFFF}
-    active_can_io = a[12]
+    active_can_io = a[4]
     return {
       "magic": a[0],
       "boot_count": a[1],
       "reset_reason": a[2],
       "stage": a[3],
-      "enter_count": a[4],
-      "wfi_return_count": a[5],
-      "pre_wfi_exti_pr1": a[6],
-      "post_wfi_exti_pr1": a[7],
-      "exti_imr1": a[8],
-      "exti_rtsr1": a[9],
-      "exti_ftsr1": a[10],
+      "snapshot_kind": "activeFdcanV1" if active_can_snapshot_valid else "legacyOrStopExti",
+      "enter_count": None if active_can_snapshot_valid else a[4],
+      "wfi_return_count": None if active_can_snapshot_valid else a[5],
+      "pre_wfi_exti_pr1": None if active_can_snapshot_valid else a[6],
+      "post_wfi_exti_pr1": None if active_can_snapshot_valid else a[7],
+      "exti_imr1": None if active_can_snapshot_valid else a[8],
+      "exti_rtsr1": None if active_can_snapshot_valid else a[9],
+      "exti_ftsr1": None if active_can_snapshot_valid else a[10],
       "hw_type_snapshot": a[11] & 0xFF,
       "bootkick_phase_mask": (a[11] >> 8) & 0xFF,
       "bootkick_pin_levels": (a[11] >> 16) & 0xFF,
@@ -659,9 +672,11 @@ class Panda:
       "can_exti_line": a[12] & 0xFFFF,
       "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFF,
       "bootkick_debug_hold_countdown": (a[12] >> 24) & 0xFF,
-      "exti_emr1": a[13],
-      "active_can_cccr": [a[6] & 0xFFFF, (a[6] >> 16) & 0xFFFF, a[8]],
-      "active_can_ie": [a[9], a[10], a[13]],
+      "exti_emr1": None if active_can_snapshot_valid else a[13],
+      "active_can_snapshot_valid": active_can_snapshot_valid,
+      "active_can_snapshot_version": 1 if active_can_snapshot_valid else None,
+      "active_can_cccr": [a[6] & 0xFFFF, (a[6] >> 16) & 0xFFFF, a[8]] if active_can_snapshot_valid else None,
+      "active_can_ie": [a[9], a[10], a[13]] if active_can_snapshot_valid else None,
       "active_can_first_rx": first_rx,
       "active_can_io": {
         "fdcan2_pb5_af": bool(active_can_io & (1 << 0)),
@@ -672,12 +687,21 @@ class Panda:
         "transceiver4_enabled": bool(active_can_io & (1 << 5)),
         "transceiver13_g11_enabled": bool(active_can_io & (1 << 6)),
         "transceiver13_d7_enabled": bool(active_can_io & (1 << 7)),
-        "rx_ready": [bool(active_can_io & (1 << (8 + i))) for i in range(3)],
-        "rx_irq_enabled": [[bool(active_can_io & (1 << (11 + i * 2 + irq))) for irq in range(2)] for i in range(3)],
-        "ile_enabled": [bool(active_can_io & (1 << (17 + i))) for i in range(3)],
-        "safety_silent": bool(active_can_io & (1 << 20)),
-        "harness_flipped": bool(active_can_io & (1 << 21)),
-      },
+        "rx_ready": [bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_READY_SHIFT + i))) for i in range(3)],
+        "rx_irq_enabled": [
+          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_IRQ_ENABLED_SHIFT + i))) for i in range(3)
+        ],
+        "ile_enabled": [
+          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_ILE_ENABLED_SHIFT + i))) for i in range(3)
+        ],
+        "rx_fifo0_to_it0": [
+          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT + i))) for i in range(3)
+        ],
+        "safety_silent": bool(active_can_io & (1 << Panda.WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT)),
+        "rx_irq_entry_seen": [
+          bool(active_can_io & (1 << (Panda.WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT + i))) for i in range(3)
+        ],
+      } if active_can_snapshot_valid else None,
       "harness_status": a[14],
       "ignition_line": a[15],
       "ignition_can_seen": a[16],
@@ -748,7 +772,7 @@ class Panda:
       "peak_bus": None if peak_bus >= 0xFC else peak_bus,
       "wake_source": wake_source,
       "peak_rx_per_sec": [a[2], a[3], a[4]],
-      "rx_irq_seen": [a[2] != 0, a[3] != 0, a[4] != 0],
+      "valid_rx_seen": [a[2] != 0, a[3] != 0, a[4] != 0],
       "first_event_seconds": a[5] or None,
       "event_sequence": events,
       "prearm_power_state": power_states[(power_meta >> 5) & 0x3] if prearm_power_seen else None,
