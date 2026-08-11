@@ -172,6 +172,12 @@ static void tick_handler(void) {
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {
       const uint8_t old_harness_status = prev_harness_status;
+      const bool gpio_exti_was_active = wake_monitor_gpio_exti_active;
+      if (gpio_exti_was_active) {
+        // Restore the previously oriented RX pin before changing orientation;
+        // otherwise the old pin would remain disconnected after host return.
+        offline_wake_active_can_gpio_restore();
+      }
       prev_harness_status = harness.status;
       can_set_orientation(harness.status == HARNESS_STATUS_FLIPPED);
 
@@ -179,10 +185,9 @@ static void tick_handler(void) {
       can_init_all();
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
-      if (wake_monitor_gpio_exti_active) {
+      if (gpio_exti_was_active) {
         // CAN initialization restores AF pins. Reapply the offline GPIO input
         // if harness orientation changes while the SoM is absent.
-        wake_monitor_gpio_exti_active = false;
         offline_wake_active_can_gpio_enable();
       }
 

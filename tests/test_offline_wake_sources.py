@@ -169,7 +169,10 @@ def test_tres_switches_oriented_fdcan2_rx_to_gpio_only_after_som_off_and_restore
   switch = power_source.split("static void offline_wake_active_can_gpio_enable", 1)[1].split(
     "static void offline_wake_active_can_gpio_restore", 1
   )[0]
+  assert "llcan_irq_disable(cans[1]);" in switch
   assert "set_gpio_mode(GPIOB, flipped ? 12U : 5U, MODE_INPUT);" in switch
+  assert switch.index("llcan_irq_disable(cans[1]);") < switch.index("set_gpio_mode(")
+  assert "llcan_irq_enable(cans[1]);" not in switch
   assert "EXTI->PR1" not in switch
   assert "can_init_all" not in switch
   assert "set_safety_mode" not in switch
@@ -179,6 +182,12 @@ def test_tres_switches_oriented_fdcan2_rx_to_gpio_only_after_som_off_and_restore
     "static void offline_wake_active_can_diag_snapshot", 1
   )[0]
   assert "set_gpio_alternate(GPIOB, pin, GPIO_AF9_FDCAN2);" in restore
+  assert "FDCAN2->IR = 0xFFFFFFFFU;" in restore
+  assert "NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);" in restore
+  assert "NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);" in restore
+  assert "llcan_irq_enable(cans[1]);" in restore
+  assert restore.index("set_gpio_alternate(") < restore.index("FDCAN2->IR = 0xFFFFFFFFU;")
+  assert restore.index("FDCAN2->IR = 0xFFFFFFFFU;") < restore.index("llcan_irq_enable(cans[1]);")
   assert "can_init_all" not in restore
 
   som_ready = main_source.split("// CAN has been armed since COMMIT", 1)[1].split("wake_debug_stage(0x3FU);", 1)[0]
@@ -195,6 +204,17 @@ def test_tres_switches_oriented_fdcan2_rx_to_gpio_only_after_som_off_and_restore
   assert "offline_wake_active_can_gpio_restore();" in reset_runtime
   assert "can_init_all();" not in heartbeat_cleanup
   assert "can_init_all();" not in reset_runtime
+
+  harness_transition = main_source.split("if (harness.status != prev_harness_status)", 1)[1].split(
+    "// decimated to 1Hz", 1
+  )[0]
+  assert "const bool gpio_exti_was_active = wake_monitor_gpio_exti_active;" in harness_transition
+  assert harness_transition.index("offline_wake_active_can_gpio_restore();") < harness_transition.index(
+    "can_set_orientation("
+  )
+  assert harness_transition.index("set_power_save_state(power_save_enabled);") < harness_transition.index(
+    "offline_wake_active_can_gpio_enable();"
+  )
 
 
 def test_fdcan_low_power_clock_is_scoped_to_tres_active_monitor():

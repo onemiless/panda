@@ -104,6 +104,9 @@ static void offline_wake_active_can_gpio_enable(void) {
   // peripheral so the asynchronous GPIO edge remains observable in shallow
   // WFI. Do not clear EXTI pending here: an edge racing this transition must
   // be delivered, not discarded.
+  llcan_irq_disable(cans[1]);
+  NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
+  NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
   set_gpio_mode(GPIOB, flipped ? 12U : 5U, MODE_INPUT);
   wake_monitor_gpio_exti_pin = pin;
   wake_monitor_gpio_exti_active = true;
@@ -114,6 +117,14 @@ static void offline_wake_active_can_gpio_restore(void) {
     const uint8_t pin = wake_monitor_gpio_exti_pin;
     if ((pin == 5U) || (pin == 12U)) {
       set_gpio_alternate(GPIOB, pin, GPIO_AF9_FDCAN2);
+      // With the RX pin detached, FDCAN2 can latch error/RX interrupt flags
+      // without a valid frame. Clear both the peripheral and NVIC state before
+      // restoring its normal IRQ path, otherwise the stale level can create an
+      // interruptRateCan2 storm and trigger Panda's fail-safe SoM wake.
+      FDCAN2->IR = 0xFFFFFFFFU;
+      NVIC_ClearPendingIRQ(FDCAN2_IT0_IRQn);
+      NVIC_ClearPendingIRQ(FDCAN2_IT1_IRQn);
+      llcan_irq_enable(cans[1]);
     }
   }
   wake_monitor_gpio_exti_active = false;
