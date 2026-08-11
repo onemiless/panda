@@ -16,6 +16,7 @@ static volatile uint8_t wake_debug_active_can_irq_pending = 0U;
 #define WAKE_SUCCESS_WORDS (sizeof(wake_success_t) / sizeof(uint32_t))
 #define WAKE_CAN_TRACE_WORDS (sizeof(wake_can_trace_t) / sizeof(uint32_t))
 #define WAKE_DEBUG_ACTIVE_CAN_TAG_WORD (offsetof(wake_debug_t, enter_count) / sizeof(uint32_t))
+#define WAKE_DEBUG_ACTIVE_CAN_EXTI_WORD (offsetof(wake_debug_t, wfi_return_count) / sizeof(uint32_t))
 #define WAKE_DEBUG_ACTIVE_CAN_FIRST_RX_WORD (offsetof(wake_debug_t, post_wfi_exti_pr1) / sizeof(uint32_t))
 
 #define WAKE_CAN_TRACE_FLAG_MONITOR_ENABLED (1U << 0U)
@@ -236,6 +237,7 @@ static void wake_debug_active_can_reset(void) {
     // enter_count is the tagged active-FDCAN snapshot only on Tres. Once the
     // snapshot is invalidated it must not be exposed as a legacy STOP count.
     wake_debug.enter_count = 0U;
+    wake_debug.wfi_return_count = 0U;
     wake_debug.pre_wfi_exti_pr1 = 0U;
     wake_debug.post_wfi_exti_pr1 = 0U;
     wake_debug.exti_imr1 = 0U;
@@ -244,6 +246,28 @@ static void wake_debug_active_can_reset(void) {
     wake_debug.exti_emr1 = 0U;
   }
   wake_debug_active_can_irq_pending = 0U;
+}
+
+static void wake_debug_active_can_exti_arm(uint32_t flags) {
+  if (wake_active_can_diag_valid(wake_debug.enter_count)) {
+    wake_debug.wfi_return_count = flags;
+    wake_debug_save_word(WAKE_DEBUG_ACTIVE_CAN_EXTI_WORD);
+  }
+}
+
+static void wake_debug_active_can_exti_irq(uint32_t pending, bool level_high) {
+  if (wake_active_can_diag_valid(wake_debug.enter_count) &&
+      ((wake_debug.wfi_return_count & WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN) == 0U)) {
+    wake_debug.wfi_return_count |= WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN;
+    if ((pending & (wake_debug.can_exti_line & 0xFFFFU)) != 0U) {
+      wake_debug.wfi_return_count |= WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING;
+    }
+    if (level_high) {
+      wake_debug.wfi_return_count |= WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH;
+    }
+    // One RTC word is written once per observation. Flash is never touched.
+    wake_debug_save_word(WAKE_DEBUG_ACTIVE_CAN_EXTI_WORD);
+  }
 }
 
 static void wake_debug_active_can_irq_entry(uint8_t physical_bus) {

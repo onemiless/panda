@@ -48,6 +48,7 @@ volatile bool stop_mode_requested = false;
 #endif
 static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
 static volatile uint32_t wake_monitor_primary_can_exti_line = 0U;
+static volatile bool wake_monitor_observer_enabled = false;
 
 static void offline_wake_raw_can_exti_disarm(void) {
   const uint32_t lines = wake_monitor_raw_can_exti_lines;
@@ -92,12 +93,43 @@ static void offline_wake_active_can_exti_arm(void) {
   NVIC_EnableIRQ(primary_irq);
 }
 
+static void offline_wake_active_can_diag_snapshot(bool observer) {
+  wake_debug_active_can_arm_snapshot();
+  if (hw_type != HW_TYPE_TRES) {
+    return;
+  }
+
+  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
+  const uint32_t primary_line = offline_wake_oriented_fdcan2_exti_line(flipped);
+  const IRQn_Type primary_irq = flipped ? EXTI15_10_IRQn : EXTI9_5_IRQn;
+  const bool mapping_ok = flipped ?
+    ((SYSCFG->EXTICR[3] & 0xFU) == SYSCFG_EXTICR4_EXTI12_PB) :
+    ((SYSCFG->EXTICR[1] & 0xF0U) == SYSCFG_EXTICR2_EXTI5_PB);
+
+  uint32_t flags = observer ? WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED : 0U;
+  flags |= ((EXTI->IMR1 & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED : 0U;
+  flags |= ((EXTI->RTSR1 & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED : 0U;
+  flags |= ((EXTI->FTSR1 & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED : 0U;
+  flags |= (NVIC_GetEnableIRQ(primary_irq) != 0U) ? WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED : 0U;
+  flags |= mapping_ok ? WAKE_ACTIVE_CAN_EXTI_MAPPING_OK : 0U;
+  flags |= ((GPIOB->IDR & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH : 0U;
+  wake_debug_active_can_exti_arm(flags);
+}
+
 static void offline_wake_raw_can_exti_irq_handler(void) {
   const uint32_t armed_lines = wake_monitor_raw_can_exti_lines;
   const uint32_t primary_line = wake_monitor_primary_can_exti_line;
   const uint32_t pending = EXTI->PR1 & armed_lines;
   if (pending != 0U) {
     EXTI->PR1 = pending;
+    if (wake_monitor_observer_enabled && ((pending & primary_line) != 0U)) {
+      // Observation mode records exactly one raw PB12/PB5 edge. It does not
+      // touch the wake state machine, safety mode, BOOTKICK, or Flash.
+      register_clear_bits(&(EXTI->IMR1), armed_lines);
+      wake_monitor_observer_enabled = false;
+      wake_debug_active_can_exti_irq(pending, (GPIOB->IDR & primary_line) != 0U);
+      return;
+    }
     if (offline_wake_primary_raw_can_edge_ready(
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, primary_line)) {
@@ -109,6 +141,7 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
       if (!wake_monitor_can_activity_pending) {
         // Latch first; diagnostics must never sit in the wake-critical path.
         wake_monitor_can_activity_pending = true;
+        wake_debug_active_can_exti_irq(pending, (GPIOB->IDR & primary_line) != 0U);
         wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
         wake_debug_can_exti(pending);
         const uint8_t exti_data[8] = {
@@ -148,6 +181,11 @@ void enable_can_transceivers(bool enabled) {
 }
 
 void set_power_save_state(bool enable) {
+  // The receive-only observer must keep the same FDCAN/EXTI path alive while
+  // Linux remains online. The next normal request restores standard behavior.
+  if (enable && wake_monitor_observer_enabled) {
+    enable = false;
+  }
   if (enable != power_save_enabled) {
     if (enable) {
       print("enable power savings\n");

@@ -183,7 +183,33 @@ def test_real_transaction_commit_arms_primary_raw_edge_fallback():
   assert "offline_wake_active_can_exti_arm();" in commit
   assert commit.index("set_safety_mode(SAFETY_SILENT, 0U);") < commit.index("offline_wake_active_can_exti_arm();")
   assert commit.index("wake_monitor_can_armed = true;") < commit.index("offline_wake_active_can_exti_arm();")
-  assert commit.index("offline_wake_active_can_exti_arm();") < commit.index("wake_debug_active_can_arm_snapshot();")
+  assert commit.index("offline_wake_active_can_exti_arm();") < commit.index("offline_wake_active_can_diag_snapshot(false);")
+
+
+def test_receive_only_observer_records_raw_exti_without_wake_or_bootkick():
+  power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
+  comms_source = (PANDA_ROOT / "board/main_comms.h").read_text()
+
+  observer = comms_source.split("case PANDA_REQUEST_ARM_WAKE_OBSERVER:", 1)[1].split(
+    "case PANDA_REQUEST_DISARM_WAKE_OBSERVER:", 1
+  )[0]
+  assert "set_power_save_state(false);" in observer
+  assert "enable_can_transceivers(true);" in observer
+  assert "offline_wake_active_can_exti_arm();" in observer
+  assert "offline_wake_active_can_diag_snapshot(true);" in observer
+  assert "set_safety_mode" not in observer
+  assert "set_bootkick" not in observer
+
+  raw_irq = power_source.split("static void offline_wake_raw_can_exti_irq_handler", 1)[1].split(
+    "static void offline_wake_raw_can_exti_init", 1
+  )[0]
+  observer_irq = raw_irq.split("if (wake_monitor_observer_enabled", 1)[1].split(
+    "if (offline_wake_primary_raw_can_edge_ready", 1
+  )[0]
+  assert "wake_debug_active_can_exti_irq" in observer_irq
+  assert "wake_monitor_can_activity_pending" not in observer_irq
+  assert "bootkick_" not in observer_irq.lower()
+  assert "wake_journal" not in observer_irq
 
 
 def test_fdcan_low_power_clock_is_scoped_to_tres_active_monitor():
@@ -378,7 +404,7 @@ def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_ch
   assert "wake_monitor_can_wake_requested" not in sample_gate
 
   commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
-  assert "wake_debug_active_can_arm_snapshot();" in commit_case
+  assert "offline_wake_active_can_diag_snapshot(false);" in commit_case
   assert "wake_can_trace_flush_rx_window();" in main_source
 
   assert "static void wake_can_trace_record_rx(uint8_t physical_bus)" in trace

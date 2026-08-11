@@ -11,6 +11,7 @@ static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
 }
 
 static void wake_monitor_reset_runtime(void) {
+  wake_monitor_observer_enabled = false;
   offline_wake_raw_can_exti_disarm();
   enable_can_transceivers(true);
   wake_monitor_tesla_event_pending = false;
@@ -125,7 +126,7 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
       wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
     } else {
       offline_wake_active_can_exti_arm();
-      wake_debug_active_can_arm_snapshot();
+      offline_wake_active_can_diag_snapshot(false);
     }
   }
   #ifdef ALLOW_DEBUG
@@ -261,7 +262,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
           wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
           wake_monitor_status.reserved = wake_monitor_prepare_flags(true, wake_monitor_status.host_session);
           offline_wake_active_can_exti_arm();
-          wake_debug_active_can_arm_snapshot();
+          offline_wake_active_can_diag_snapshot(false);
           current_board->set_bootkick(BOOT_STANDBY);
           wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
         } else {
@@ -296,6 +297,21 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     // **** 0xba: identify the current Linux boot session
     case PANDA_REQUEST_SET_HOST_SESSION:
       wake_monitor_status.host_session = wake_monitor_request_transaction(req);
+      break;
+    // **** 0xec: arm a receive-only PB12/PB5 observer without BOOTKICK
+    case PANDA_REQUEST_ARM_WAKE_OBSERVER:
+      wake_monitor_observer_enabled = false;
+      offline_wake_raw_can_exti_disarm();
+      set_power_save_state(false);
+      enable_can_transceivers(true);
+      wake_monitor_observer_enabled = true;
+      offline_wake_active_can_exti_arm();
+      offline_wake_active_can_diag_snapshot(true);
+      break;
+    // **** 0xed: stop observing without clearing the captured RTC evidence
+    case PANDA_REQUEST_DISARM_WAKE_OBSERVER:
+      wake_monitor_observer_enabled = false;
+      offline_wake_raw_can_exti_disarm();
       break;
     // **** 0xb6: schedule bootkick test after N seconds
     case 0xb6:

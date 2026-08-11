@@ -57,6 +57,21 @@ def test_transaction_requests_use_both_usb_words():
   ]
 
 
+def test_receive_only_wake_observer_requests_do_not_use_bootkick_api():
+  panda = object.__new__(Panda)
+  panda._handle = FakeHandle()
+  panda.wake_debug = lambda: {"active_can_snapshot_valid": True}
+
+  assert panda.arm_wake_observer() == {"active_can_snapshot_valid": True}
+  assert panda.disarm_wake_observer() == {"active_can_snapshot_valid": True}
+  assert panda._handle.writes == [
+    (Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_ARM_REQUEST, 0, 0, b'', {}),
+    (Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_DISARM_REQUEST, 0, 0, b'', {}),
+  ]
+  assert Panda.WAKE_OBSERVER_ARM_REQUEST == 0xEC
+  assert Panda.WAKE_OBSERVER_DISARM_REQUEST == 0xED
+
+
 def test_wake_packet_layouts_come_from_shared_header():
   assert Panda.WAKE_DEBUG_STRUCT.size == 64
   assert Panda.WAKE_SUCCESS_STRUCT.size == 40
@@ -70,8 +85,13 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
   io = 0
   for bit in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23):
     io |= 1 << bit
+  exti = (Panda.WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED | Panda.WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED |
+          Panda.WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED | Panda.WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED |
+          Panda.WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED | Panda.WAKE_ACTIVE_CAN_EXTI_MAPPING_OK |
+          Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN | Panda.WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING |
+          Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH)
   payload = Panda.WAKE_DEBUG_STRUCT.pack(
-    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC | io, 0,
+    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC | io, exti,
     0x56781234, first_rx, 0x9ABC,
     0x11111111, 0x22222222, 9, 0, 0x33333333,
     2, 0, 0, 1, 0, 0, 0, 0,
@@ -89,6 +109,18 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
   assert debug["active_can_cccr"] == [0x1234, 0x5678, 0x9ABC]
   assert debug["active_can_ie"] == [0x11111111, 0x22222222, 0x33333333]
   assert debug["active_can_first_rx"] == {"bus": 1, "address": 0x122}
+  assert debug["active_can_exti"] == {
+    "observer_armed": True,
+    "imr_enabled": True,
+    "rising_enabled": True,
+    "falling_enabled": True,
+    "nvic_enabled": True,
+    "mapping_ok": True,
+    "irq_seen": True,
+    "primary_pending": True,
+    "arm_level_high": True,
+    "irq_level_high": False,
+  }
   assert debug["active_can_io"]["fdcan2_pb5_af"] is False
   assert debug["active_can_io"]["fdcan2_pb12_af"] is True
   assert debug["active_can_io"]["rx_ready"] == [True, True, True]
@@ -120,6 +152,7 @@ def test_wake_debug_does_not_misdecode_stop_mode_fields_as_active_can_snapshot()
   assert debug["active_can_cccr"] is None
   assert debug["active_can_ie"] is None
   assert debug["active_can_first_rx"] is None
+  assert debug["active_can_exti"] is None
   assert debug["active_can_io"] is None
 
 

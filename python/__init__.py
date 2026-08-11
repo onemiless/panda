@@ -162,6 +162,8 @@ class Panda:
   WAKE_MONITOR_ABORT_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ABORT_WAKE_MONITOR")
   WAKE_MONITOR_HOST_SESSION_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_SET_HOST_SESSION")
   WAKE_MONITOR_STATUS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_MONITOR_STATUS")
+  WAKE_OBSERVER_ARM_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_ARM_WAKE_OBSERVER")
+  WAKE_OBSERVER_DISARM_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_DISARM_WAKE_OBSERVER")
   WAKE_MONITOR_ARMED_STAGE = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_WAKE_MONITOR_ARMED_STAGE")
   WAKE_MONITOR_STATUS_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_MONITOR_STATUS_MAGIC")
   WAKE_DEBUG_MAGIC = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_DEBUG_MAGIC")
@@ -174,6 +176,16 @@ class Panda:
   WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_RX_FIFO0_IT0_SHIFT")
   WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_DIAG_IRQ_SEEN_SHIFT")
   WAKE_ACTIVE_CAN_FIRST_RX_VALID = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_FIRST_RX_VALID")
+  WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED")
+  WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED")
+  WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED")
+  WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED")
+  WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED")
+  WAKE_ACTIVE_CAN_EXTI_MAPPING_OK = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_MAPPING_OK")
+  WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN")
+  WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING")
+  WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH")
+  WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH")
   WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
   WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
   WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
@@ -588,6 +600,14 @@ class Panda:
     low, high = self._wake_transaction_words(host_session)
     self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_MONITOR_HOST_SESSION_REQUEST, low, high, b'')
 
+  def arm_wake_observer(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_ARM_REQUEST, 0, 0, b'')
+    return self.wake_debug()
+
+  def disarm_wake_observer(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, Panda.WAKE_OBSERVER_DISARM_REQUEST, 0, 0, b'')
+    return self.wake_debug()
+
   def wake_monitor_status(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_MONITOR_STATUS_REQUEST, 0, 0, self.WAKE_MONITOR_STATUS_STRUCT.size)
     a = self.WAKE_MONITOR_STATUS_STRUCT.unpack(dat)
@@ -649,6 +669,7 @@ class Panda:
     if active_can_snapshot_valid and (a[7] & Panda.WAKE_ACTIVE_CAN_FIRST_RX_VALID):
       first_rx = {"bus": (a[7] >> 29) & 0x3, "address": a[7] & 0x1FFFFFFF}
     active_can_io = a[4]
+    active_can_exti = a[5]
     return {
       "magic": a[0],
       "boot_count": a[1],
@@ -678,6 +699,18 @@ class Panda:
       "active_can_cccr": [a[6] & 0xFFFF, (a[6] >> 16) & 0xFFFF, a[8]] if active_can_snapshot_valid else None,
       "active_can_ie": [a[9], a[10], a[13]] if active_can_snapshot_valid else None,
       "active_can_first_rx": first_rx,
+      "active_can_exti": {
+        "observer_armed": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_OBSERVER_ARMED),
+        "imr_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IMR_ENABLED),
+        "rising_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED),
+        "falling_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED),
+        "nvic_enabled": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED),
+        "mapping_ok": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_MAPPING_OK),
+        "irq_seen": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN),
+        "primary_pending": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING),
+        "arm_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH),
+        "irq_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH),
+      } if active_can_snapshot_valid else None,
       "active_can_io": {
         "fdcan2_pb5_af": bool(active_can_io & (1 << 0)),
         "fdcan2_pb12_af": bool(active_can_io & (1 << 1)),
