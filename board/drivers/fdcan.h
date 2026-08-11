@@ -1,6 +1,5 @@
 #include "board/drivers/drivers.h"
 #include "board/drivers/offline_wake_source_policy.h"
-#include "board/drivers/tesla_offline_wake.h"
 
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
@@ -9,6 +8,10 @@ static bool wake_debug_gpio_is_alternate(GPIO_TypeDef *gpio, uint8_t pin, uint8_
   const uint32_t mode = (gpio->MODER >> (pin * 2U)) & 0x3U;
   const uint32_t af = (gpio->AFR[pin / 8U] >> ((pin % 8U) * 4U)) & 0xFU;
   return (mode == MODE_ALTERNATE) && (af == alternate);
+}
+
+static bool wake_debug_gpio_is_input(GPIO_TypeDef *gpio, uint8_t pin) {
+  return ((gpio->MODER >> (pin * 2U)) & 0x3U) == MODE_INPUT;
 }
 
 static bool wake_debug_gpio_output_is_low(GPIO_TypeDef *gpio, uint8_t pin) {
@@ -77,52 +80,6 @@ static void wake_debug_active_can_arm_snapshot(void) {
   io |= (uint32_t)can_silent << WAKE_ACTIVE_CAN_DIAG_SAFETY_SILENT_SHIFT;
   wake_debug.enter_count = wake_active_can_diag_make(io);
   wake_debug_active_can_save_arm_snapshot();
-}
-#endif
-
-#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-static tesla_offline_wake_state_t tesla_wake_state[PANDA_CAN_CNT] = {
-  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
-  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
-  TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
-};
-
-static uint8_t tesla_wake_source(const CANPacket_t *msg, uint8_t physical_bus) {
-  const uint8_t logical_bus = msg->bus < PANDA_CAN_CNT ? msg->bus : 0U;
-  const tesla_offline_wake_result_t result = tesla_offline_wake_step(
-    &tesla_wake_state[logical_bus], msg->addr, msg->bus, GET_LEN(msg), msg->data);
-  if (wake_monitor_enabled) {
-    const bool prearm = !wake_monitor_som_off_seen;
-    const bool postarm = wake_monitor_som_off_ready && wake_monitor_can_armed;
-    if (result.power_frame && result.checksum_valid) {
-      if (prearm) {
-        wake_can_trace_prearm_power(result.power_state);
-      } else if (postarm) {
-        wake_can_trace_postarm_power(physical_bus, result.power_state);
-      } else {
-      }
-    } else if (((msg->addr == 0x102U) || (msg->addr == 0x103U)) &&
-               ((msg->bus == 0U) || (msg->bus == 1U)) && (GET_LEN(msg) == 8U)) {
-      const bool closed = tesla_front_door_latch_closed(msg->data);
-      if (prearm) {
-        wake_can_trace_prearm_binary(msg->addr, closed);
-      } else if (postarm) {
-        wake_can_trace_postarm_binary(msg->addr, closed, tesla_front_door_handle_pulled(msg->data));
-      } else {
-      }
-    } else if ((msg->addr == 0x311U) && (msg->bus == 0U) &&
-               (GET_LEN(msg) == 7U) && result.checksum_valid) {
-      const bool door_open = tesla_ui_warning_door_open(msg->data);
-      if (prearm) {
-        wake_can_trace_prearm_binary(msg->addr, door_open);
-      } else if (postarm) {
-        wake_can_trace_postarm_binary(msg->addr, door_open, false);
-      } else {
-      }
-    } else {
-    }
-  }
-  return result.source;
 }
 #endif
 
@@ -367,39 +324,19 @@ void can_rx(uint8_t can_number) {
       wake_monitor_can_activity_pending = true;
     }
 
-    const uint8_t tesla_source = tesla_wake_source(&to_push, can_number);
-    if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed &&
-        (can_number < PANDA_CAN_CNT)) {
+    const bool production_wake_diag = wake_monitor_enabled && wake_monitor_committed &&
+                                      wake_monitor_can_armed && (can_number < PANDA_CAN_CNT);
+    if (production_wake_diag) {
       // Continue sampling after the first wake request so a multi-second wake
       // cluster produces a full one-second peak instead of a partial window.
       wake_can_trace_record_rx(can_number);
+    }
+    if (production_wake_diag || wake_monitor_observer_enabled) {
       wake_debug_active_can_first_rx(can_number, to_push.addr);
     }
     if (first_activity) {
       wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, to_push.bus, can_number,
                                GET_LEN(&to_push), to_push.addr, to_push.data);
-    }
-    if (bootkick_tesla_event_should_latch(
-          wake_monitor_enabled,
-          wake_monitor_committed,
-          wake_monitor_can_armed,
-          (tesla_source != TESLA_WAKE_SOURCE_NONE) && (wake_monitor_status.state != WAKE_MONITOR_STATE_FAILED),
-          wake_monitor_can_wake_requested)) {
-      const uint8_t journal_source = (tesla_source == TESLA_WAKE_SOURCE_DOOR) ?
-                                       WAKE_JOURNAL_SOURCE_TESLA_DOOR :
-                                       WAKE_JOURNAL_SOURCE_TESLA_POWER;
-      wake_journal_queue_event(journal_source, 0x34U, to_push.bus, can_number,
-                               GET_LEN(&to_push), to_push.addr, to_push.data);
-      // The CAN ISR only latches the event. The 1 Hz monitor owns all BOOTKICK
-      // state and RTC stage changes so arming cannot overwrite a dispatched
-      // wake request on an interrupt boundary.
-      wake_monitor_tesla_event_pending = true;
-      // Prefer the direct door trigger if both signals arrive before the 1 Hz
-      // monitor consumes the event.
-      if ((wake_monitor_tesla_event_source == TESLA_WAKE_SOURCE_NONE) ||
-          (tesla_source == TESLA_WAKE_SOURCE_DOOR)) {
-        wake_monitor_tesla_event_source = tesla_source;
-      }
     }
     #endif
 
@@ -432,7 +369,8 @@ void can_rx(uint8_t can_number) {
 
 static void FDCAN1_IT0_IRQ_Handler(void) {
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed;
+  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
+                                wake_monitor_observer_enabled;
   if (wake_diag_active) {
     wake_debug_active_can_irq_entry(0U);
   }
@@ -448,7 +386,8 @@ static void FDCAN1_IT1_IRQ_Handler(void) { process_can(0); }
 
 static void FDCAN2_IT0_IRQ_Handler(void) {
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed;
+  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
+                                wake_monitor_observer_enabled;
   if (wake_diag_active) {
     wake_debug_active_can_irq_entry(1U);
   }
@@ -464,7 +403,8 @@ static void FDCAN2_IT1_IRQ_Handler(void) { process_can(1); }
 
 static void FDCAN3_IT0_IRQ_Handler(void) {
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
-  const bool wake_diag_active = wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed;
+  const bool wake_diag_active = (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed) ||
+                                wake_monitor_observer_enabled;
   if (wake_diag_active) {
     wake_debug_active_can_irq_entry(2U);
   }

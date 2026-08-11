@@ -8,11 +8,6 @@
 #define OFFLINE_WAKE_FDCAN1_EXTI_LINE (1UL << 8)
 #define OFFLINE_WAKE_TRES_FDCAN3_EXTI_LINE (1UL << 9)
 #define OFFLINE_WAKE_CUATRO_FDCAN3_EXTI_LINE (1UL << 12)
-#define WAKE_MONITOR_CAN_RATE_DELTA 50U
-#define WAKE_MONITOR_CAN_FAST_TICK_HZ 8U
-#define WAKE_MONITOR_CAN_BURST_WINDOW_TICKS 2U
-#define WAKE_MONITOR_PRIMARY_BUS_QUIET_S 10U
-#define OFFLINE_WAKE_CAN_BASELINE_UNSET UINT32_MAX
 
 typedef struct {
   bool keep_can_active;
@@ -60,17 +55,6 @@ static inline uint32_t offline_wake_tres_can_exti_lines(bool flipped_harness) {
          offline_wake_oriented_fdcan2_exti_line(flipped_harness);
 }
 
-static inline uint32_t offline_wake_tres_exti_lines(bool flipped_harness) {
-  return OFFLINE_WAKE_SBU_EXTI_LINES | offline_wake_tres_can_exti_lines(flipped_harness);
-}
-
-static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bool som_off_ready,
-                                                        bool can_armed, bool wake_requested,
-                                                        uint32_t pending_lines, uint32_t armed_lines) {
-  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
-         ((pending_lines & armed_lines) != 0U);
-}
-
 static inline bool offline_wake_primary_raw_can_edge_ready(bool monitor_enabled, bool som_off_ready,
                                                            bool can_armed, bool wake_requested,
                                                            uint32_t pending_lines, uint32_t primary_line) {
@@ -81,61 +65,10 @@ static inline bool offline_wake_primary_raw_can_edge_ready(bool monitor_enabled,
          (primary_line != 0U) && ((pending_lines & primary_line) != 0U);
 }
 
-static inline uint32_t offline_wake_can_sleep_baseline_step(uint32_t baseline_rate, uint32_t current_rate) {
-  return (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) || (current_rate < baseline_rate) ?
-         current_rate : baseline_rate;
-}
-
-static inline uint8_t offline_wake_primary_bus_quiet_step(uint8_t quiet_seconds, uint32_t received_frames) {
-  if (received_frames != 0U) {
-    return 0U;
-  }
-  return (quiet_seconds < WAKE_MONITOR_PRIMARY_BUS_QUIET_S) ? (quiet_seconds + 1U) : quiet_seconds;
-}
-
-static inline bool offline_wake_primary_bus_guard_ready(uint8_t settle_countdown, uint8_t quiet_seconds) {
-  return (settle_countdown == 0U) && (quiet_seconds >= WAKE_MONITOR_PRIMARY_BUS_QUIET_S);
-}
-
 static inline bool offline_wake_physical_bus_rx_ready(bool monitor_enabled, bool committed,
                                                       bool can_armed, bool wake_requested,
                                                       uint8_t physical_bus) {
   return monitor_enabled && committed && can_armed && !wake_requested && (physical_bus < 3U);
-}
-
-static inline bool offline_wake_can_rate_increase(uint32_t current_rate, uint32_t baseline_rate) {
-  if (baseline_rate == OFFLINE_WAKE_CAN_BASELINE_UNSET) {
-    return false;
-  }
-  const uint32_t delta = (current_rate > baseline_rate) ? (current_rate - baseline_rate) : 0U;
-  // Tesla keeps low-rate background CAN traffic after the vehicle goes to
-  // sleep. A real door/vehicle wake is a sustained rise above that sleeping
-  // traffic, not necessarily a doubling of the host-alive traffic rate.
-  return (delta >= WAKE_MONITOR_CAN_RATE_DELTA) && (delta >= (baseline_rate / 2U));
-}
-
-static inline uint32_t offline_wake_can_window_rate(uint32_t window_count) {
-  const uint32_t scale = WAKE_MONITOR_CAN_FAST_TICK_HZ / WAKE_MONITOR_CAN_BURST_WINDOW_TICKS;
-  return (window_count > (UINT32_MAX / scale)) ? UINT32_MAX : (window_count * scale);
-}
-
-static inline bool offline_wake_multibus_burst_ready(const uint32_t *window_counts,
-                                                     const uint32_t *baseline_rates,
-                                                     uint8_t party_physical_bus) {
-  if (party_physical_bus >= 3U) {
-    return false;
-  }
-
-  const bool party_active = offline_wake_can_rate_increase(
-    offline_wake_can_window_rate(window_counts[party_physical_bus]), baseline_rates[party_physical_bus]);
-  bool supporting_bus_active = false;
-  for (uint8_t i = 0U; i < 3U; i++) {
-    if (i != party_physical_bus) {
-      supporting_bus_active |= offline_wake_can_rate_increase(
-        offline_wake_can_window_rate(window_counts[i]), baseline_rates[i]);
-    }
-  }
-  return party_active && supporting_bus_active;
 }
 
 static inline uint32_t offline_wake_cuatro_can_exti_lines(bool flipped_harness) {
@@ -147,8 +80,4 @@ static inline uint32_t offline_wake_cuatro_can_exti_lines(bool flipped_harness) 
     lines |= OFFLINE_WAKE_CUATRO_FDCAN3_EXTI_LINE;
   }
   return lines;
-}
-
-static inline uint32_t offline_wake_cuatro_exti_lines(bool flipped_harness) {
-  return OFFLINE_WAKE_SBU_EXTI_LINES | offline_wake_cuatro_can_exti_lines(flipped_harness);
 }

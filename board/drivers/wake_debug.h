@@ -4,7 +4,6 @@
 
 #include "board/wake_protocol.h"
 #include "board/drivers/wake_active_can_diag_policy.h"
-#include "board/drivers/wake_event_trace_policy.h"
 
 volatile wake_debug_t wake_debug;
 volatile wake_success_t wake_success;
@@ -28,8 +27,6 @@ static volatile uint8_t wake_debug_active_can_irq_pending = 0U;
 #define WAKE_CAN_TRACE_FLAG_IGNITION_CAN (1U << 6U)
 #define WAKE_CAN_TRACE_FLAG_IGNITION_LINE (1U << 7U)
 #define WAKE_CAN_TRACE_SOURCE_RAW_EDGE 0xFCU
-#define WAKE_CAN_TRACE_SOURCE_TESLA_DOOR 0xFDU
-#define WAKE_CAN_TRACE_SOURCE_TESLA_POWER 0xFEU
 
 static void wake_debug_enable_backup_domain(void) {
   register_set_bits(&(RCC->APB4ENR), RCC_APB4ENR_RTCAPBEN);
@@ -169,10 +166,13 @@ static void wake_can_trace_clear_peak(void) {
   wake_can_trace.peak_rx_bus2 = 0U;
   wake_can_trace.first_event_seconds = 0U;
   wake_can_trace.event_sequence = 0U;
-  wake_can_trace.power_meta &= 0xE0U;
-  wake_can_trace.left_door_meta = wake_event_trace_prepare_binary_postarm(wake_can_trace.left_door_meta);
-  wake_can_trace.right_door_meta = wake_event_trace_prepare_binary_postarm(wake_can_trace.right_door_meta);
-  wake_can_trace.ui_door_meta = wake_event_trace_prepare_binary_postarm(wake_can_trace.ui_door_meta);
+  // These fields are retained only for RTC/Python ABI compatibility with old
+  // semantic wake traces. New firmware wakes from the physical RX edge and
+  // does not persist per-message Tesla state.
+  wake_can_trace.power_meta = 0U;
+  wake_can_trace.left_door_meta = 0U;
+  wake_can_trace.right_door_meta = 0U;
+  wake_can_trace.ui_door_meta = 0U;
   wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | 0xFF000000U;
   for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
     wake_can_trace_rx_window[i] = 0U;
@@ -317,64 +317,6 @@ static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {
 static void wake_can_trace_set_source(uint8_t source) {
   wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | ((uint32_t)source << 24U);
   wake_can_trace_save();
-}
-
-static void wake_can_trace_append_event(uint8_t event) {
-  const uint32_t sequence = wake_event_trace_append(wake_can_trace.event_sequence, event);
-  if (sequence != wake_can_trace.event_sequence) {
-    if (wake_can_trace.first_event_seconds == 0U) {
-      wake_can_trace.first_event_seconds = (uint16_t)(wake_can_trace.state & 0xFFFFU);
-    }
-    wake_can_trace.event_sequence = sequence;
-    wake_can_trace_save();
-  }
-}
-
-static void wake_can_trace_prearm_power(uint8_t power_state) {
-  const uint8_t meta = wake_event_trace_power_prearm(power_state);
-  if ((wake_can_trace.power_meta & 0xE0U) != meta) {
-    wake_can_trace.power_meta = meta;
-    wake_can_trace_save();
-  }
-}
-
-static void wake_can_trace_prearm_binary(uint16_t address, bool state) {
-  volatile uint8_t *meta = (address == 0x102U) ? &wake_can_trace.left_door_meta :
-                           (address == 0x103U) ? &wake_can_trace.right_door_meta :
-                                                &wake_can_trace.ui_door_meta;
-  const uint8_t new_meta = wake_event_trace_door_prearm(state);
-  if ((*meta & 0xC0U) != new_meta) {
-    *meta = new_meta;
-    wake_can_trace_save();
-  }
-}
-
-static void wake_can_trace_postarm_power(uint8_t physical_bus, uint8_t power_state) {
-  const uint8_t count = wake_event_trace_count(wake_can_trace.power_meta);
-  const uint8_t event = wake_event_trace_power_code(physical_bus, power_state);
-  wake_can_trace.power_meta = wake_event_trace_increment_count(wake_can_trace.power_meta);
-  if ((count == 0U) || (wake_event_trace_last_power(wake_can_trace.event_sequence) != event)) {
-    wake_can_trace_append_event(event);
-  } else {
-    wake_can_trace_save();
-  }
-}
-
-static void wake_can_trace_postarm_binary(uint16_t address, bool state, bool force_event) {
-  volatile uint8_t *meta = (address == 0x102U) ? &wake_can_trace.left_door_meta :
-                           (address == 0x103U) ? &wake_can_trace.right_door_meta :
-                                                &wake_can_trace.ui_door_meta;
-  const uint8_t event = (address == 0x102U) ? WAKE_EVENT_TRACE_LEFT_DOOR :
-                        (address == 0x103U) ? WAKE_EVENT_TRACE_RIGHT_DOOR :
-                                             WAKE_EVENT_TRACE_UI_DOOR;
-  const uint8_t count = wake_event_trace_count(*meta);
-  const bool changed = wake_event_trace_postarm_binary_state(*meta) != state;
-  *meta = wake_event_trace_set_postarm_binary_state(wake_event_trace_increment_count(*meta), state);
-  if ((count == 0U) || changed || force_event) {
-    wake_can_trace_append_event(event);
-  } else {
-    wake_can_trace_save();
-  }
 }
 
 static void wake_debug_stage(uint32_t stage) {

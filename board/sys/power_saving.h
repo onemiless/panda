@@ -9,10 +9,7 @@
 
 bool power_save_enabled = false;
 volatile bool wake_monitor_enabled = false;
-volatile bool wake_monitor_tesla_event_pending = false;
-volatile uint8_t wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
 volatile bool wake_monitor_can_activity_pending = false;
-volatile bool wake_monitor_raw_can_edge_pending = false;
 volatile bool wake_monitor_can_wake_requested = false;
 volatile bool wake_monitor_can_dispatch_pending = false;
 volatile uint32_t wake_monitor_can_dispatch_stage = 0U;
@@ -48,7 +45,9 @@ volatile bool stop_mode_requested = false;
 #endif
 static volatile uint32_t wake_monitor_raw_can_exti_lines = 0U;
 static volatile uint32_t wake_monitor_primary_can_exti_line = 0U;
-static volatile bool wake_monitor_observer_enabled = false;
+volatile bool wake_monitor_observer_enabled = false;
+static volatile bool wake_monitor_gpio_exti_active = false;
+static volatile uint8_t wake_monitor_gpio_exti_pin = 0U;
 
 static void offline_wake_raw_can_exti_disarm(void) {
   const uint32_t lines = wake_monitor_raw_can_exti_lines;
@@ -93,6 +92,54 @@ static void offline_wake_active_can_exti_arm(void) {
   NVIC_EnableIRQ(primary_irq);
 }
 
+static void offline_wake_active_can_gpio_enable(void) {
+  if (hw_type != HW_TYPE_TRES) {
+    return;
+  }
+
+  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
+  const uint8_t pin = flipped ? 12U : 5U;
+  // The EXTI path was armed at COMMIT while FDCAN was still decoding. Once
+  // Linux is confirmed absent, detach only the proven FDCAN2 RX pin from its
+  // peripheral so the asynchronous GPIO edge remains observable in shallow
+  // WFI. Do not clear EXTI pending here: an edge racing this transition must
+  // be delivered, not discarded.
+  set_gpio_mode(GPIOB, flipped ? 12U : 5U, MODE_INPUT);
+  wake_monitor_gpio_exti_pin = pin;
+  wake_monitor_gpio_exti_active = true;
+}
+
+static void offline_wake_active_can_gpio_restore(void) {
+  if ((hw_type == HW_TYPE_TRES) && wake_monitor_gpio_exti_active) {
+    const uint8_t pin = wake_monitor_gpio_exti_pin;
+    if ((pin == 5U) || (pin == 12U)) {
+      set_gpio_alternate(GPIOB, pin, GPIO_AF9_FDCAN2);
+    }
+  }
+  wake_monitor_gpio_exti_active = false;
+  wake_monitor_gpio_exti_pin = 0U;
+}
+
+static bool offline_wake_active_can_gpio_ready(void) {
+  if (!wake_monitor_gpio_exti_active || (hw_type != HW_TYPE_TRES)) {
+    return false;
+  }
+  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
+  const uint8_t pin = flipped ? 12U : 5U;
+  const uint32_t line = 1UL << pin;
+  const IRQn_Type irq = flipped ? EXTI15_10_IRQn : EXTI9_5_IRQn;
+  const bool mapping_ok = flipped ?
+    ((SYSCFG->EXTICR[3] & 0xFU) == SYSCFG_EXTICR4_EXTI12_PB) :
+    ((SYSCFG->EXTICR[1] & 0xF0U) == SYSCFG_EXTICR2_EXTI5_PB);
+  const bool transceiver_ok = flipped ?
+    wake_debug_gpio_output_is_low(GPIOB, 11U) :
+    wake_debug_gpio_output_is_low(GPIOB, 10U);
+  return (wake_monitor_gpio_exti_pin == pin) && wake_debug_gpio_is_input(GPIOB, pin) &&
+         transceiver_ok && mapping_ok && ((EXTI->IMR1 & line) != 0U) &&
+         ((EXTI->RTSR1 & line) != 0U) && ((EXTI->FTSR1 & line) != 0U) &&
+         (NVIC_GetEnableIRQ(irq) != 0U);
+}
+
 static void offline_wake_active_can_diag_snapshot(bool observer) {
   wake_debug_active_can_arm_snapshot();
   if (hw_type != HW_TYPE_TRES) {
@@ -113,6 +160,7 @@ static void offline_wake_active_can_diag_snapshot(bool observer) {
   flags |= (NVIC_GetEnableIRQ(primary_irq) != 0U) ? WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED : 0U;
   flags |= mapping_ok ? WAKE_ACTIVE_CAN_EXTI_MAPPING_OK : 0U;
   flags |= ((GPIOB->IDR & primary_line) != 0U) ? WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH : 0U;
+  flags |= wake_monitor_gpio_exti_active ? WAKE_ACTIVE_CAN_EXTI_GPIO_MODE : 0U;
   wake_debug_active_can_exti_arm(flags);
 }
 
@@ -126,7 +174,6 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
       // Observation mode records exactly one raw PB12/PB5 edge. It does not
       // touch the wake state machine, safety mode, BOOTKICK, or Flash.
       register_clear_bits(&(EXTI->IMR1), armed_lines);
-      wake_monitor_observer_enabled = false;
       wake_debug_active_can_exti_irq(pending, (GPIOB->IDR & primary_line) != 0U);
       return;
     }
@@ -154,15 +201,7 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
         wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, 1U,
                                  CAN_NUM_FROM_BUS_NUM(1U), 4U, 0U, exti_data);
       }
-    } else if (offline_wake_raw_can_edge_hint_ready(
-          wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
-          wake_monitor_can_wake_requested, pending, armed_lines)) {
-      // Other physical buses remain sampling hints and never wake the SoM by
-      // themselves, because a sleeping Tesla can keep background traffic on
-      // those buses.
-      register_clear_bits(&(EXTI->IMR1), armed_lines);
-      wake_monitor_raw_can_edge_pending = true;
-      wake_debug_can_exti(pending);
+    } else {
     }
   }
 }

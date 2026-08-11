@@ -12,12 +12,10 @@ static uint32_t wake_monitor_request_transaction(const ControlPacket_t *req) {
 
 static void wake_monitor_reset_runtime(void) {
   wake_monitor_observer_enabled = false;
+  offline_wake_active_can_gpio_restore();
   offline_wake_raw_can_exti_disarm();
   enable_can_transceivers(true);
-  wake_monitor_tesla_event_pending = false;
-  wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
   wake_monitor_can_activity_pending = false;
-  wake_monitor_raw_can_edge_pending = false;
   wake_monitor_can_wake_requested = false;
   wake_monitor_can_dispatch_pending = false;
   wake_monitor_can_dispatch_stage = 0U;
@@ -52,6 +50,23 @@ static bool wake_monitor_can_health_ready(void) {
              llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
   }
   return ready;
+}
+
+static bool wake_monitor_offline_source_ready(void) {
+  if ((hw_type == HW_TYPE_TRES) && wake_monitor_gpio_exti_active) {
+    bool ready = (faults == 0U) && !power_save_enabled && offline_wake_active_can_gpio_ready();
+    // FDCAN2 is intentionally detached after SoM-off. Keep monitoring the
+    // two controllers that remain active; their bus-off/error state still
+    // requires a fail-safe SoM wake for diagnosis.
+    for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+      if (i != 1U) {
+        ready &= (can_health[i].bus_off == 0U) && (can_health[i].error_passive == 0U) &&
+                 llcan_rx_ready(CANIF_FROM_CAN_NUM(i));
+      }
+    }
+    return ready;
+  }
+  return wake_monitor_can_health_ready();
 }
 
 static void wake_monitor_capture_prepare_snapshot(void) {
@@ -301,6 +316,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     // **** 0xec: arm a receive-only PB12/PB5 observer without BOOTKICK
     case PANDA_REQUEST_ARM_WAKE_OBSERVER:
       wake_monitor_observer_enabled = false;
+      offline_wake_active_can_gpio_restore();
       offline_wake_raw_can_exti_disarm();
       set_power_save_state(false);
       enable_can_transceivers(true);

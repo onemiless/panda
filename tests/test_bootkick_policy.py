@@ -28,9 +28,7 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, true, false, false));
       assert(!bootkick_tres_early_reset_ready(true, 1U, 0U, false, 0U, false, false, true));
 
-      // A confirmed rate transition after the shutdown guard is sufficient.
-      // Sleeping-vehicle CAN remains present, so no pre-shutdown quiet period
-      // may be assumed here.
+      // A latched physical CAN event after the shutdown guard is sufficient.
       assert(bootkick_can_activity_ready(true, true, true, true, false));
       assert(!bootkick_can_activity_ready(false, true, true, true, false));
       assert(!bootkick_can_activity_ready(true, false, true, true, false));
@@ -62,72 +60,6 @@ def test_tres_early_reset_requires_a_completed_unanswered_first_pulse(tmp_path):
       // A completed failure is terminal and must not be retried forever.
       assert(!bootkick_wake_request_needs_dispatch(true, true, true, false, false, false, 0U, 0x3EU));
 
-      // COMMIT arms event capture immediately. SoM readiness only controls
-      // BOOTKICK dispatch and must not suppress event latching.
-      assert(!bootkick_tesla_event_ready(true, true, false, true, false));
-      assert(bootkick_tesla_event_ready(true, true, true, true, false));
-      assert(!bootkick_tesla_event_ready(true, true, true, false, false));
-      assert(!bootkick_tesla_event_ready(true, true, true, true, true));
-      assert(!bootkick_tesla_event_ready(false, true, true, true, false));
-      assert(!bootkick_tesla_event_ready(true, false, true, true, false));
-      assert(bootkick_tesla_event_should_latch(true, true, true, true, false));
-      assert(!bootkick_tesla_event_should_latch(true, false, true, true, false));
-      assert(!bootkick_tesla_event_should_latch(true, true, false, true, false));
-      assert(!bootkick_tesla_event_should_latch(false, true, true, true, false));
-      assert(!bootkick_tesla_event_should_latch(true, true, true, false, false));
-      assert(!bootkick_tesla_event_should_latch(true, true, true, true, true));
-
-      // Tesla UI_warning must show a real sequential counter and an open
-      // door on Party bus before it can wake a powered-down SoM.
-      assert(tesla_wake_counter_valid(0, 1));
-      assert(tesla_wake_counter_valid(15, 0));
-      assert(!tesla_wake_counter_valid(-1, 0));
-      assert(!tesla_wake_counter_valid(1, 1));
-      assert(!tesla_wake_counter_valid(1, 3));
-      // Sleeping/standby power states (0-2) must never wake the SoM. Only
-      // Tesla's documented DRIVE state is an ignition-quality wake source.
-      const uint8_t power_drive[8] = {0x60U, 0U, 0U, 0U, 0U, 0U, 0x30U, 0xB3U};
-      assert(tesla_wake_checksum_valid(0x221U, power_drive, 8U, 7U));
-      assert(!tesla_power_state_wake_ready(0U, 8U, true, 0, 1, 0U));
-      assert(!tesla_power_state_wake_ready(0U, 8U, true, 0, 1, 1U));
-      assert(!tesla_power_state_wake_ready(0U, 8U, true, 0, 1, 2U));
-      assert(tesla_power_state_wake_ready(0U, 8U, true, 0, 1, 3U));
-      assert(!tesla_power_state_wake_ready(0U, 8U, false, 0, 1, 3U));
-      assert(!tesla_power_state_wake_ready(1U, 8U, true, 0, 1, 3U));
-      assert(!tesla_power_state_wake_ready(0U, 7U, true, 0, 1, 3U));
-      assert(!tesla_power_state_wake_ready(0U, 8U, true, 0, 2, 3U));
-      const uint8_t closed_frame[7] = {0x18U, 4U, 0U, 0U, 0U, 0U, 0U};
-      const uint8_t open_frame[7] = {0x29U, 5U, 0U, 0x10U, 0U, 0U, 0U};
-      assert(tesla_ui_warning_counter(open_frame) == 5);
-      assert(!tesla_ui_warning_door_open(closed_frame));
-      assert(tesla_ui_warning_door_open(open_frame));
-      assert(tesla_wake_checksum_valid(0x311U, closed_frame, 7U, 0U));
-      assert(tesla_wake_checksum_valid(0x311U, open_frame, 7U, 0U));
-      assert(tesla_door_wake_ready(0U, 7U, true, 4, 5, true, false, 0U, true));
-      assert(!tesla_door_wake_ready(0U, 7U, true, 4, 5, true, true, 0U, true));
-      assert(tesla_door_wake_ready(0U, 7U, true, 4, 5, false, false, 1U, true));
-      assert(!tesla_door_wake_ready(0U, 7U, false, 4, 5, true, false, 0U, true));
-      assert(!tesla_door_wake_ready(1U, 7U, true, 4, 5, true, false, 0U, true));
-      assert(!tesla_door_wake_ready(0U, 8U, true, 4, 5, true, false, 0U, true));
-      assert(!tesla_door_wake_ready(0U, 7U, true, 4, 5, true, false, 0U, false));
-      assert(!tesla_door_wake_ready(0U, 7U, true, 4, 6, true, false, 0U, true));
-
-      // On vehicles where UI_warning is not emitted during the initial door
-      // wake, use the direct VCLEFT/VCRIGHT latch message as a fallback. A
-      // handle pull is sufficient by itself; otherwise require a known
-      // closed-to-open transition so a door left open cannot cause a loop.
-      const uint8_t latch_closed[8] = {0U, 0x01U, 0U, 0U, 0U, 0U, 0U, 0U};
-      const uint8_t latch_open[8] = {0U, 0x00U, 0U, 0U, 0U, 0U, 0U, 0U};
-      const uint8_t handle_pulled[8] = {0U, 0x05U, 0U, 0U, 0U, 0U, 0U, 0U};
-      assert(tesla_front_door_latch_closed(latch_closed));
-      assert(!tesla_front_door_latch_closed(latch_open));
-      assert(tesla_front_door_handle_pulled(handle_pulled));
-      assert(tesla_door_latch_wake_ready(0U, 8U, true, true, latch_open));
-      assert(!tesla_door_latch_wake_ready(0U, 8U, true, false, latch_open));
-      assert(!tesla_door_latch_wake_ready(0U, 8U, false, false, latch_open));
-      assert(tesla_door_latch_wake_ready(0U, 8U, false, false, handle_pulled));
-      assert(tesla_door_latch_wake_ready(1U, 8U, true, true, latch_open));
-      assert(!tesla_door_latch_wake_ready(0U, 7U, true, true, latch_open));
       return 0;
     }
     """

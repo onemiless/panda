@@ -129,8 +129,6 @@ void wake_monitor_attempt_failed(void) {
   wake_monitor_can_wake_requested = false;
   wake_monitor_can_dispatch_pending = false;
   wake_monitor_can_dispatch_stage = 0U;
-  wake_monitor_tesla_event_pending = false;
-  wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
   wake_monitor_can_activity_pending = false;
   wake_monitor_reset_requested = false;
   wake_monitor_harness_requested = false;
@@ -181,6 +179,12 @@ static void tick_handler(void) {
       can_init_all();
       set_safety_mode(current_safety_mode, current_safety_param);
       set_power_save_state(power_save_enabled);
+      if (wake_monitor_gpio_exti_active) {
+        // CAN initialization restores AF pins. Reapply the offline GPIO input
+        // if harness orientation changes while the SoM is absent.
+        wake_monitor_gpio_exti_active = false;
+        offline_wake_active_can_gpio_enable();
+      }
 
       if (wake_monitor_enabled && wake_monitor_som_off_ready &&
           (old_harness_status == HARNESS_STATUS_NC) &&
@@ -259,8 +263,10 @@ static void tick_handler(void) {
               // CAN has been armed since COMMIT. This transition only decides
               // when BOOTKICK may be dispatched; it must never clear an event
               // that arrived while Linux was still powering down.
+              offline_wake_active_can_gpio_enable();
               wake_monitor_som_off_ready = true;
               wake_monitor_status.state = WAKE_MONITOR_STATE_ARMED;
+              offline_wake_active_can_diag_snapshot(false);
               wake_debug_stage(0x3FU);
             }
           } else {
@@ -269,7 +275,7 @@ static void tick_handler(void) {
         }
       }
 
-      const bool wake_monitor_controllers_ready = wake_monitor_can_health_ready();
+      const bool wake_monitor_controllers_ready = wake_monitor_offline_source_ready();
       const bool wake_monitor_rx_integrity_ready = wake_monitor_prepare_integrity_clean();
       if (wake_monitor_offline_fault_ready(wake_monitor_enabled, wake_monitor_committed,
                                            faults != 0U, wake_monitor_controllers_ready,
@@ -297,32 +303,6 @@ static void tick_handler(void) {
         };
         wake_journal_queue_event(WAKE_JOURNAL_SOURCE_PANDA_FAULT, 0x35U, 3U, 3U,
                                  5U, 0U, fault_data);
-      }
-
-      if (bootkick_tesla_event_ready(
-            wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
-            wake_monitor_tesla_event_pending, wake_monitor_can_wake_requested)) {
-        const uint8_t tesla_event_source = wake_monitor_tesla_event_source;
-        wake_monitor_can_wake_requested = true;
-        wake_monitor_tesla_event_pending = false;
-        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
-        wake_monitor_can_activity_pending = false;
-        wake_monitor_can_dispatch_pending = true;
-        wake_monitor_can_dispatch_stage = 0x34U;
-        wake_monitor_status.state = WAKE_MONITOR_STATE_WAKING;
-        wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-        wake_monitor_status.trigger_stage = 0x34U;
-        if (tesla_event_source == TESLA_WAKE_SOURCE_DOOR) {
-          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_DOOR);
-        } else if (tesla_event_source == TESLA_WAKE_SOURCE_POWER) {
-          wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_TESLA_POWER);
-        } else {
-        }
-        wake_debug_stage(0x42U);
-        if (bootkick_request_wake_pulse(wake_monitor_can_dispatch_stage)) {
-          wake_monitor_can_dispatch_pending = false;
-          wake_monitor_can_dispatch_stage = 0U;
-        }
       }
 
       if (bootkick_can_activity_ready(
@@ -355,8 +335,8 @@ static void tick_handler(void) {
         }
       }
 
-      // A Tesla wake frame can arrive on the FDCAN interrupt boundary while
-      // the 1 Hz monitor is persisting the just-armed (0x3F) stage. Recover
+      // A physical CAN event can arrive on an interrupt boundary while the
+      // 1 Hz monitor is persisting the just-armed (0x3F) stage. Recover
       // the exact stranded signature instead of leaving wake_requested set
       // without ever dispatching BOOTKICK.
       if (bootkick_wake_request_needs_dispatch(
@@ -410,18 +390,16 @@ static void tick_handler(void) {
         wake_monitor_committed, wake_monitor_som_off_seen && recent_heartbeat,
         wake_monitor_status.host_session, wake_monitor_status.committed_host_session, wake_attempted);
       if (wake_monitor_enabled && (heartbeat_result != WAKE_MONITOR_HEARTBEAT_IGNORE)) {
+        offline_wake_active_can_gpio_restore();
         offline_wake_raw_can_exti_disarm();
         can_clear(&can_rx_q);
         wake_monitor_enabled = false;
         wake_monitor_committed = false;
-        wake_monitor_tesla_event_pending = false;
-        wake_monitor_tesla_event_source = TESLA_WAKE_SOURCE_NONE;
         wake_monitor_som_off_seen = false;
         wake_monitor_som_off_ready = false;
         wake_monitor_som_off_countdown = 0U;
         wake_monitor_can_armed = false;
         wake_monitor_can_activity_pending = false;
-        wake_monitor_raw_can_edge_pending = false;
         wake_monitor_can_led_countdown = 0U;
         wake_monitor_can_wake_requested = false;
         wake_monitor_can_dispatch_pending = false;
@@ -430,7 +408,8 @@ static void tick_handler(void) {
         enable_can_transceivers(true);
         if (heartbeat_result == WAKE_MONITOR_HEARTBEAT_CONFIRMED) {
           // Recovery stages describe progress, not the original wake source.
-          // Preserve 0x34/0x35 even when heartbeat returns after reset/0x41.
+          // Preserve the legacy 0x34 or current 0x35 source even when
+          // heartbeat returns after reset/0x41.
           const uint32_t success_stage = bootkick_success_source_stage(
             bootkick_wake_confirmation_pending, bootkick_wake_trigger_stage, wake_debug.stage);
           wake_journal_queue_result(true, bootkick_wake_attempts, bootkick_wake_uart_seen,
@@ -548,7 +527,7 @@ static void tick_handler(void) {
       const bool wake_requested = wake_monitor_can_wake_requested || wake_monitor_harness_requested ||
                                   wake_monitor_reset_requested || bootkick_wake_confirmation_pending;
       const bool can_activity_seen = (wake_monitor_can_led_countdown > 0U) ||
-                                     wake_monitor_can_activity_pending || wake_monitor_tesla_event_pending;
+                                     wake_monitor_can_activity_pending;
       led_set(LED_BLUE, offline_wake_blue_led_on(
         wake_monitor_som_off_ready, can_activity_seen, wake_requested, wake_monitor_led_phase));
       wake_monitor_led_phase++;

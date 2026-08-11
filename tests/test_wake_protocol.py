@@ -89,7 +89,7 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
           Panda.WAKE_ACTIVE_CAN_EXTI_RISING_ENABLED | Panda.WAKE_ACTIVE_CAN_EXTI_FALLING_ENABLED |
           Panda.WAKE_ACTIVE_CAN_EXTI_NVIC_ENABLED | Panda.WAKE_ACTIVE_CAN_EXTI_MAPPING_OK |
           Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_SEEN | Panda.WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING |
-          Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH)
+          Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH | Panda.WAKE_ACTIVE_CAN_EXTI_GPIO_MODE)
   payload = Panda.WAKE_DEBUG_STRUCT.pack(
     Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, Panda.WAKE_ACTIVE_CAN_DIAG_V1_MAGIC | io, exti,
     0x56781234, first_rx, 0x9ABC,
@@ -108,6 +108,7 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
   assert debug["pre_wfi_exti_pr1"] is None
   assert debug["active_can_cccr"] == [0x1234, 0x5678, 0x9ABC]
   assert debug["active_can_ie"] == [0x11111111, 0x22222222, 0x33333333]
+  assert debug["active_can_exti"]["gpio_mode"] is True
   assert debug["active_can_first_rx"] == {"bus": 1, "address": 0x122}
   assert debug["active_can_exti"] == {
     "observer_armed": True,
@@ -120,6 +121,7 @@ def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
     "primary_pending": True,
     "arm_level_high": True,
     "irq_level_high": False,
+    "gpio_mode": True,
   }
   assert debug["active_can_io"]["fdcan2_pb5_af"] is False
   assert debug["active_can_io"]["fdcan2_pb12_af"] is True

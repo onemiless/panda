@@ -186,6 +186,7 @@ class Panda:
   WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING")
   WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH")
   WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH")
+  WAKE_ACTIVE_CAN_EXTI_GPIO_MODE = _parse_c_define(WAKE_PROTOCOL_HEADER, "WAKE_ACTIVE_CAN_EXTI_GPIO_MODE")
   WAKE_DEBUG_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_DEBUG")
   WAKE_SUCCESS_CLEAR_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_CLEAR_WAKE_SUCCESS")
   WAKE_SUCCESS_REQUEST = _parse_c_define(WAKE_PROTOCOL_HEADER, "PANDA_REQUEST_GET_WAKE_SUCCESS")
@@ -710,6 +711,7 @@ class Panda:
         "primary_pending": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_PRIMARY_PENDING),
         "arm_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_ARM_LEVEL_HIGH),
         "irq_level_high": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_IRQ_LEVEL_HIGH),
+        "gpio_mode": bool(active_can_exti & Panda.WAKE_ACTIVE_CAN_EXTI_GPIO_MODE),
       } if active_can_snapshot_valid else None,
       "active_can_io": {
         "fdcan2_pb5_af": bool(active_can_io & (1 << 0)),
