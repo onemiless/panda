@@ -33,6 +33,14 @@ static inline wake_monitor_prepare_action_t wake_monitor_prepare_action(uint8_t 
   return WAKE_MONITOR_PREPARE_START;
 }
 
+static inline uint8_t wake_monitor_prepare_flags(bool can_healthy, uint32_t host_session) {
+  uint8_t flags = can_healthy ? WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY : 0U;
+  if (can_healthy && (host_session != 0U)) {
+    flags |= WAKE_MONITOR_STATUS_FLAG_RX_ARMED;
+  }
+  return flags;
+}
+
 static inline bool wake_monitor_commit_allowed(uint8_t state, uint32_t current_transaction,
                                                uint32_t requested_transaction,
                                                uint32_t prepared_host_session, uint32_t current_host_session,

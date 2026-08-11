@@ -111,10 +111,8 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
   wake_monitor_prepared_host_session = wake_monitor_status.host_session;
   wake_monitor_capture_prepare_snapshot();
   wake_monitor_can_armed = committed;
-  wake_monitor_status.reserved = 0U;
-  if (wake_monitor_can_health_ready()) {
-    wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
-  }
+  wake_monitor_status.reserved = wake_monitor_prepare_flags(wake_monitor_can_health_ready(),
+                                                            wake_monitor_prepared_host_session);
   if (committed) {
     wake_monitor_committed = true;
     set_safety_mode(SAFETY_SILENT, 0U);
@@ -257,7 +255,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
           wake_monitor_status.committed_host_session = wake_monitor_status.host_session;
           wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
           wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
-          wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_RX_ARMED | WAKE_MONITOR_STATUS_FLAG_CAN_HEALTHY;
+          wake_monitor_status.reserved = wake_monitor_prepare_flags(true, wake_monitor_status.host_session);
           current_board->set_bootkick(BOOT_STANDBY);
           wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);
         } else {

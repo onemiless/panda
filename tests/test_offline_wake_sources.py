@@ -142,7 +142,7 @@ def test_new_prepare_is_idempotent_metadata_only_and_prearms_rx():
   metadata_prepare = prepare_helper.split("if (committed) {", 1)[0]
   assert "set_safety_mode(" not in metadata_prepare
   assert "can_init_all();" not in prepare_helper
-  assert "WAKE_MONITOR_STATUS_FLAG_RX_ARMED" in prepare_helper
+  assert "wake_monitor_prepare_flags(wake_monitor_can_health_ready()," in prepare_helper
   assert "wake_monitor_prepared_host_session" in prepare_helper
   assert "wake_monitor_capture_prepare_snapshot();" in prepare_helper
   assert "if (action == WAKE_MONITOR_PREPARE_START)" in prepare_case
