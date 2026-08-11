@@ -6,6 +6,7 @@
 volatile wake_debug_t wake_debug;
 volatile wake_success_t wake_success;
 volatile wake_can_trace_t wake_can_trace;
+static volatile uint16_t wake_can_trace_rx_window[PANDA_CAN_CNT] = {0U, 0U, 0U};
 
 #define WAKE_DEBUG_WORDS (sizeof(wake_debug_t) / sizeof(uint32_t))
 #define WAKE_SUCCESS_WORDS (sizeof(wake_success_t) / sizeof(uint32_t))
@@ -136,7 +137,69 @@ static void wake_can_trace_clear_peak(void) {
   wake_can_trace.right_door_meta = wake_event_trace_prepare_binary_postarm(wake_can_trace.right_door_meta);
   wake_can_trace.ui_door_meta = wake_event_trace_prepare_binary_postarm(wake_can_trace.ui_door_meta);
   wake_can_trace.state = (wake_can_trace.state & 0x00FFFFFFU) | 0xFF000000U;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    wake_can_trace_rx_window[i] = 0U;
+  }
   wake_can_trace_save();
+}
+
+static uint16_t wake_can_trace_peak_rx(uint8_t physical_bus) {
+  uint16_t peak = 0U;
+  switch (physical_bus) {
+    case 0U: peak = wake_can_trace.peak_rx_bus0; break;
+    case 1U: peak = wake_can_trace.peak_rx_bus1; break;
+    case 2U: peak = wake_can_trace.peak_rx_bus2; break;
+    default: break;
+  }
+  return peak;
+}
+
+static void wake_can_trace_set_peak_rx(uint8_t physical_bus, uint16_t peak) {
+  switch (physical_bus) {
+    case 0U: wake_can_trace.peak_rx_bus0 = peak; break;
+    case 1U: wake_can_trace.peak_rx_bus1 = peak; break;
+    case 2U: wake_can_trace.peak_rx_bus2 = peak; break;
+    default: break;
+  }
+}
+
+// RTC backup registers have no flash wear. Persist only the first validated
+// RX per physical controller immediately, then save again only when a new
+// one-second peak is observed.
+static void wake_can_trace_record_rx(uint8_t physical_bus) {
+  if (physical_bus >= PANDA_CAN_CNT) {
+    return;
+  }
+  if (wake_can_trace_rx_window[physical_bus] < UINT16_MAX) {
+    wake_can_trace_rx_window[physical_bus] += 1U;
+  }
+  if (wake_can_trace_peak_rx(physical_bus) == 0U) {
+    wake_can_trace_set_peak_rx(physical_bus, 1U);
+    wake_can_trace_save();
+  }
+}
+
+static void wake_can_trace_flush_rx_window(void) {
+  bool changed = false;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    const uint16_t count = wake_can_trace_rx_window[i];
+    if (count > wake_can_trace_peak_rx(i)) {
+      wake_can_trace_set_peak_rx(i, count);
+      changed = true;
+    }
+    wake_can_trace_rx_window[i] = 0U;
+  }
+  if (changed) {
+    wake_can_trace_save();
+  }
+}
+
+static void wake_debug_active_can_first_rx(uint8_t physical_bus, uint32_t address) {
+  if ((wake_debug.post_wfi_exti_pr1 & (1UL << 31U)) == 0U) {
+    wake_debug.post_wfi_exti_pr1 = (1UL << 31U) |
+      (((uint32_t)physical_bus & 0x3U) << 29U) | (address & 0x1FFFFFFFU);
+    wake_debug_save();
+  }
 }
 
 static void wake_can_trace_update_state(uint16_t off_seconds, uint8_t flags) {

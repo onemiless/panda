@@ -43,6 +43,7 @@ def test_wake_can_trace_decodes_persistent_can_snapshot():
     "peak_bus": 2,
     "wake_source": None,
     "peak_rx_per_sec": [120, 340, 560],
+    "rx_irq_seen": [True, True, True],
     "first_event_seconds": 780,
     "event_sequence": ["power:bus2:conditioning", "leftDoor", "uiDoor"],
     "prearm_power_state": "off",

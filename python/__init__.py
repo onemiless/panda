@@ -633,6 +633,10 @@ class Panda:
   def wake_debug(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, Panda.WAKE_DEBUG_REQUEST, 0, 0, self.WAKE_DEBUG_STRUCT.size)
     a = self.WAKE_DEBUG_STRUCT.unpack(dat)
+    first_rx = None
+    if a[7] & (1 << 31):
+      first_rx = {"bus": (a[7] >> 29) & 0x3, "address": a[7] & 0x1FFFFFFF}
+    active_can_io = a[12]
     return {
       "magic": a[0],
       "boot_count": a[1],
@@ -656,6 +660,24 @@ class Panda:
       "bootkick_debug_waiting_countdown": (a[12] >> 16) & 0xFF,
       "bootkick_debug_hold_countdown": (a[12] >> 24) & 0xFF,
       "exti_emr1": a[13],
+      "active_can_cccr": [a[6] & 0xFFFF, (a[6] >> 16) & 0xFFFF, a[8]],
+      "active_can_ie": [a[9], a[10], a[13]],
+      "active_can_first_rx": first_rx,
+      "active_can_io": {
+        "fdcan2_pb5_af": bool(active_can_io & (1 << 0)),
+        "fdcan2_pb12_af": bool(active_can_io & (1 << 1)),
+        "fdcan1_pb8_af": bool(active_can_io & (1 << 2)),
+        "fdcan3_pg9_af": bool(active_can_io & (1 << 3)),
+        "transceiver2_enabled": bool(active_can_io & (1 << 4)),
+        "transceiver4_enabled": bool(active_can_io & (1 << 5)),
+        "transceiver13_g11_enabled": bool(active_can_io & (1 << 6)),
+        "transceiver13_d7_enabled": bool(active_can_io & (1 << 7)),
+        "rx_ready": [bool(active_can_io & (1 << (8 + i))) for i in range(3)],
+        "rx_irq_enabled": [[bool(active_can_io & (1 << (11 + i * 2 + irq))) for irq in range(2)] for i in range(3)],
+        "ile_enabled": [bool(active_can_io & (1 << (17 + i))) for i in range(3)],
+        "safety_silent": bool(active_can_io & (1 << 20)),
+        "harness_flipped": bool(active_can_io & (1 << 21)),
+      },
       "harness_status": a[14],
       "ignition_line": a[15],
       "ignition_can_seen": a[16],
@@ -726,6 +748,7 @@ class Panda:
       "peak_bus": None if peak_bus >= 0xFC else peak_bus,
       "wake_source": wake_source,
       "peak_rx_per_sec": [a[2], a[3], a[4]],
+      "rx_irq_seen": [a[2] != 0, a[3] != 0, a[4] != 0],
       "first_event_seconds": a[5] or None,
       "event_sequence": events,
       "prearm_power_state": power_states[(power_meta >> 5) & 0x3] if prearm_power_seen else None,

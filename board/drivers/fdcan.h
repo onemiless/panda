@@ -5,6 +5,50 @@
 FDCAN_GlobalTypeDef *cans[PANDA_CAN_CNT] = {FDCAN1, FDCAN2, FDCAN3};
 
 #if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
+static bool wake_debug_gpio_is_alternate(GPIO_TypeDef *gpio, uint8_t pin, uint8_t alternate) {
+  const uint32_t mode = (gpio->MODER >> (pin * 2U)) & 0x3U;
+  const uint32_t af = (gpio->AFR[pin / 8U] >> ((pin % 8U) * 4U)) & 0xFU;
+  return (mode == MODE_ALTERNATE) && (af == alternate);
+}
+
+static void wake_debug_active_can_arm_snapshot(void) {
+  wake_debug.pre_wfi_exti_pr1 = (FDCAN1->CCCR & 0xFFFFU) | ((FDCAN2->CCCR & 0xFFFFU) << 16U);
+  wake_debug.post_wfi_exti_pr1 = 0U;
+  wake_debug.exti_imr1 = FDCAN3->CCCR;
+  wake_debug.exti_rtsr1 = FDCAN1->IE;
+  wake_debug.exti_ftsr1 = FDCAN2->IE;
+  wake_debug.exti_emr1 = FDCAN3->IE;
+
+  uint32_t io = 0U;
+  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 5U, GPIO_AF9_FDCAN2) << 0U;
+  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 12U, GPIO_AF9_FDCAN2) << 1U;
+  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOB, 8U, GPIO_AF9_FDCAN1) << 2U;
+  io |= (uint32_t)wake_debug_gpio_is_alternate(GPIOG, 9U, GPIO_AF2_FDCAN3) << 3U;
+  io |= (uint32_t)((GPIOB->ODR & (1UL << 10U)) == 0U) << 4U;
+  io |= (uint32_t)((GPIOB->ODR & (1UL << 11U)) == 0U) << 5U;
+  io |= (uint32_t)((GPIOG->ODR & (1UL << 11U)) == 0U) << 6U;
+  io |= (uint32_t)((GPIOD->ODR & (1UL << 7U)) == 0U) << 7U;
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    io |= (uint32_t)llcan_rx_ready(cans[i]) << (8U + i);
+  }
+  const IRQn_Type irq_pairs[PANDA_CAN_CNT][2] = {
+    {FDCAN1_IT0_IRQn, FDCAN1_IT1_IRQn},
+    {FDCAN2_IT0_IRQn, FDCAN2_IT1_IRQn},
+    {FDCAN3_IT0_IRQn, FDCAN3_IT1_IRQn},
+  };
+  for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
+    io |= (NVIC_GetEnableIRQ(irq_pairs[i][0]) != 0U) << (11U + (i * 2U));
+    io |= (NVIC_GetEnableIRQ(irq_pairs[i][1]) != 0U) << (12U + (i * 2U));
+    io |= (uint32_t)((cans[i]->ILE & FDCAN_ILE_EINT0) != 0U) << (17U + i);
+  }
+  io |= (uint32_t)can_silent << 20U;
+  io |= (uint32_t)(harness.status == HARNESS_STATUS_FLIPPED) << 21U;
+  wake_debug.can_exti_line = io;
+  wake_debug_save();
+}
+#endif
+
+#if !defined(PANDA_BODY) && !defined(PANDA_JUNGLE)
 static tesla_offline_wake_state_t tesla_wake_state[PANDA_CAN_CNT] = {
   TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
   TESLA_OFFLINE_WAKE_STATE_INITIALIZER,
@@ -287,6 +331,8 @@ void can_rx(uint8_t can_number) {
     if (offline_wake_physical_bus_rx_ready(
           wake_monitor_enabled, wake_monitor_committed, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, can_number)) {
+      wake_can_trace_record_rx(can_number);
+      wake_debug_active_can_first_rx(can_number, to_push.addr);
       const bool first_activity = !wake_monitor_can_activity_pending;
       wake_monitor_can_activity_pending = true;
       if (first_activity) {

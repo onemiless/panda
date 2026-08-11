@@ -14,6 +14,19 @@ class FakeHandle:
     self.writes.append((request_type, request, value, index, data, kwargs))
 
 
+class FakeReadHandle:
+  def __init__(self, payload: bytes):
+    self.payload = payload
+
+  def controlRead(self, request_type, request, value, index, length):
+    assert request_type == Panda.REQUEST_IN
+    assert request == Panda.WAKE_DEBUG_REQUEST
+    assert value == 0
+    assert index == 0
+    assert length == Panda.WAKE_DEBUG_STRUCT.size
+    return self.payload
+
+
 def test_enable_deepsleep_uses_shared_firmware_request():
   panda = object.__new__(Panda)
   panda._handle = FakeHandle()
@@ -50,6 +63,34 @@ def test_wake_packet_layouts_come_from_shared_header():
   assert Panda.WAKE_CAN_TRACE_STRUCT.size == 24
   assert Panda.WAKE_MONITOR_STATUS_STRUCT.size == 20
   assert Panda.WAKE_MONITOR_STATUS_MAGIC == 0x574D4F4E
+
+
+def test_wake_debug_decodes_active_fdcan_arm_and_first_rx_snapshot():
+  first_rx = (1 << 31) | (1 << 29) | 0x122
+  io = 0
+  for bit in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
+    io |= 1 << bit
+  payload = Panda.WAKE_DEBUG_STRUCT.pack(
+    Panda.WAKE_DEBUG_MAGIC, 8, 0x420000, 0x30, 2, 0,
+    0x56781234, first_rx, 0x9ABC,
+    0x11111111, 0x22222222, 9, io, 0x33333333,
+    2, 0, 0, 1, 0, 0, 0, 0,
+  )
+  panda = object.__new__(Panda)
+  panda._handle = FakeReadHandle(payload)
+
+  debug = panda.wake_debug()
+
+  assert debug["active_can_cccr"] == [0x1234, 0x5678, 0x9ABC]
+  assert debug["active_can_ie"] == [0x11111111, 0x22222222, 0x33333333]
+  assert debug["active_can_first_rx"] == {"bus": 1, "address": 0x122}
+  assert debug["active_can_io"]["fdcan2_pb5_af"] is False
+  assert debug["active_can_io"]["fdcan2_pb12_af"] is True
+  assert debug["active_can_io"]["rx_ready"] == [True, True, True]
+  assert debug["active_can_io"]["rx_irq_enabled"] == [[True, True], [True, True], [True, True]]
+  assert debug["active_can_io"]["ile_enabled"] == [True, True, True]
+  assert debug["active_can_io"]["safety_silent"] is True
+  assert debug["active_can_io"]["harness_flipped"] is True
 
 
 def test_reset_reason_is_snapshotted_then_hardware_flags_are_cleared():

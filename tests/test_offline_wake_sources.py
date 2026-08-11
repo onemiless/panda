@@ -313,3 +313,27 @@ def test_wake_journal_writes_only_first_event_and_final_result():
   assert "wake_journal_queue_checkpoint(" not in main_source
   assert "wake_journal_queue_checkpoint(" not in comms
   assert "off_seconds % 60U" not in trace
+
+
+def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_churn():
+  fdcan = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
+  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  comms = (PANDA_ROOT / "board/main_comms.h").read_text()
+  trace = (PANDA_ROOT / "board/drivers/wake_debug.h").read_text()
+
+  physical_rx = fdcan.split("if (offline_wake_physical_bus_rx_ready(", 1)[1].split(
+    "if (bootkick_tesla_event_should_latch(", 1
+  )[0]
+  assert "wake_can_trace_record_rx(can_number);" in physical_rx
+  assert physical_rx.index("wake_can_trace_record_rx(can_number);") < physical_rx.index(
+    "wake_monitor_can_activity_pending = true;"
+  )
+  assert "wake_debug_active_can_first_rx(can_number, to_push.addr);" in physical_rx
+
+  commit_case = comms.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split("break;", 1)[0]
+  assert "wake_debug_active_can_arm_snapshot();" in commit_case
+  assert "wake_can_trace_flush_rx_window();" in main_source
+
+  assert "static void wake_can_trace_record_rx(uint8_t physical_bus)" in trace
+  assert "static void wake_can_trace_flush_rx_window(void)" in trace
+  assert "wake_journal" not in trace

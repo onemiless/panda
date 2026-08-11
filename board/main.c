@@ -217,6 +217,7 @@ static void tick_handler(void) {
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
       if (wake_monitor_enabled && wake_monitor_committed) {
+        wake_can_trace_flush_rx_window();
         if (!recent_heartbeat) {
           if (!wake_monitor_som_off_seen) {
             wake_monitor_off_seconds = 0U;
