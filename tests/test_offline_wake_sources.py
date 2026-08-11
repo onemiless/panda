@@ -56,10 +56,12 @@ def test_offline_wake_source_masks_include_sbu_and_all_tres_can_rx(tmp_path):
       const uint32_t primary_raw_line = offline_wake_oriented_fdcan2_exti_line(false);
       assert(offline_wake_primary_raw_can_edge_ready(
         true, true, true, false, primary_raw_line, primary_raw_line));
+      // COMMIT owns event capture immediately. SoM readiness gates only the
+      // later BOOTKICK dispatch; it must not create another blind window.
+      assert(offline_wake_primary_raw_can_edge_ready(
+        true, false, true, false, primary_raw_line, primary_raw_line));
       assert(!offline_wake_primary_raw_can_edge_ready(
         false, true, true, false, primary_raw_line, primary_raw_line));
-      assert(!offline_wake_primary_raw_can_edge_ready(
-        true, false, true, false, primary_raw_line, primary_raw_line));
       assert(!offline_wake_primary_raw_can_edge_ready(
         true, true, false, false, primary_raw_line, primary_raw_line));
       assert(!offline_wake_primary_raw_can_edge_ready(
@@ -149,13 +151,46 @@ def test_new_prepare_is_idempotent_metadata_only_and_prearms_rx():
   assert "wake_monitor_prepare(transaction, false);" in prepare_case
 
 
-def test_tres_active_monitor_keeps_primary_fdcan_decoding():
+def test_tres_active_monitor_keeps_fdcan_af_and_arms_primary_raw_edge_fallback():
   power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
-  main_source = (PANDA_ROOT / "board/main.c").read_text()
+  fdcan_source = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
 
-  assert "offline_wake_raw_can_exti_arm" not in power_source
-  assert "offline_wake_raw_can_exti_arm" not in main_source
-  assert "offline_wake_physical_bus_rx_ready(" in (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
+  arm = power_source.split("static void offline_wake_active_can_exti_arm", 1)[1].split("void enable_can_transceivers", 1)[0]
+  assert "offline_wake_oriented_fdcan2_exti_line" in arm
+  assert "SYSCFG->EXTICR" in arm
+  assert "EXTI->IMR1" in arm
+  assert "EXTI->RTSR1" in arm
+  assert "EXTI->FTSR1" in arm
+  assert "RCC_APB1HLPENR_FDCANLPEN" in arm
+  assert "const IRQn_Type primary_irq" in arm
+  assert "flipped ? EXTI15_10_IRQn : EXTI9_5_IRQn" in arm
+  assert "NVIC_ClearPendingIRQ(primary_irq);" in arm
+  assert "NVIC_EnableIRQ(primary_irq);" in arm
+  assert arm.index("EXTI->PR1 = primary_line;") < arm.index("NVIC_ClearPendingIRQ(primary_irq);")
+  assert arm.index("register_set_bits(&(EXTI->IMR1), primary_line);") < arm.index("NVIC_EnableIRQ(primary_irq);")
+  assert "set_gpio_mode" not in arm
+  assert "set_gpio_alternate" not in arm
+  assert "can_init_all" not in arm
+  assert "offline_wake_physical_bus_rx_ready(" in fdcan_source
+
+
+def test_real_transaction_commit_arms_primary_raw_edge_fallback():
+  comms_source = (PANDA_ROOT / "board/main_comms.h").read_text()
+
+  commit = comms_source.split("case PANDA_REQUEST_COMMIT_WAKE_MONITOR:", 1)[1].split(
+    "case PANDA_REQUEST_ABORT_WAKE_MONITOR:", 1
+  )[0]
+  assert "offline_wake_active_can_exti_arm();" in commit
+  assert commit.index("set_safety_mode(SAFETY_SILENT, 0U);") < commit.index("offline_wake_active_can_exti_arm();")
+  assert commit.index("wake_monitor_can_armed = true;") < commit.index("offline_wake_active_can_exti_arm();")
+  assert commit.index("offline_wake_active_can_exti_arm();") < commit.index("wake_debug_active_can_arm_snapshot();")
+
+
+def test_fdcan_low_power_clock_is_scoped_to_tres_active_monitor():
+  source = (PANDA_ROOT / "board/stm32h7/peripherals.h").read_text()
+
+  assert "RCC->APB1HENR |= RCC_APB1HENR_FDCANEN" in source
+  assert "RCC_APB1HLPENR_FDCANLPEN" not in source
 
 
 def test_host_return_does_not_reinitialize_healthy_fdcan():
@@ -317,6 +352,7 @@ def test_wake_journal_writes_only_first_event_and_final_result():
 
 def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_churn():
   fdcan = (PANDA_ROOT / "board/drivers/fdcan.h").read_text()
+  power_source = (PANDA_ROOT / "board/sys/power_saving.h").read_text()
   main_source = (PANDA_ROOT / "board/main.c").read_text()
   comms = (PANDA_ROOT / "board/main_comms.h").read_text()
   trace = (PANDA_ROOT / "board/drivers/wake_debug.h").read_text()
@@ -329,6 +365,13 @@ def test_active_fdcan_monitor_persists_one_shot_rtc_diagnostics_without_flash_ch
   assert offline_rx.index("wake_monitor_can_activity_pending = true;") < offline_rx.index(
     "wake_can_trace_record_rx(can_number);"
   )
+  raw_irq = power_source.split("static void offline_wake_raw_can_exti_irq_handler", 1)[1].split(
+    "static void offline_wake_raw_can_exti_init", 1
+  )[0]
+  assert raw_irq.index("wake_monitor_can_activity_pending = true;") < raw_irq.index(
+    "wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);"
+  )
+  assert raw_irq.count("wake_journal_queue_event(") == 1
   sample_gate = offline_rx.split(
     "if (wake_monitor_enabled && wake_monitor_committed && wake_monitor_can_armed", 1
   )[1].split("}", 1)[0]

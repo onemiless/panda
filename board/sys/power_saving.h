@@ -59,6 +59,39 @@ static void offline_wake_raw_can_exti_disarm(void) {
   wake_monitor_primary_can_exti_line = 0U;
 }
 
+static void offline_wake_active_can_exti_arm(void) {
+  offline_wake_raw_can_exti_disarm();
+  if (hw_type != HW_TYPE_TRES) {
+    return;
+  }
+
+  // Tres uses shallow __WFI() while monitoring; keep FDCAN clocked only for
+  // this mode instead of changing low-power behavior on every H7 board.
+  register_set_bits(&(RCC->APB1HLPENR), RCC_APB1HLPENR_FDCANLPEN);
+
+  // Keep the proven party-bus RX pin in FDCAN alternate-function mode. EXTI
+  // observes the same electrical edge as a fallback if the FDCAN IRQ path is
+  // not clocked or routed while the SoM is off.
+  const bool flipped = harness.status == HARNESS_STATUS_FLIPPED;
+  const uint32_t primary_line = offline_wake_oriented_fdcan2_exti_line(flipped);
+  const IRQn_Type primary_irq = flipped ? EXTI15_10_IRQn : EXTI9_5_IRQn;
+  if (flipped) {
+    register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR4_EXTI12_PB, 0xFU);
+  } else {
+    register_set(&(SYSCFG->EXTICR[1]), SYSCFG_EXTICR2_EXTI5_PB, 0xF0U);
+  }
+
+  wake_monitor_raw_can_exti_lines = primary_line;
+  wake_monitor_primary_can_exti_line = primary_line;
+  register_set_bits(&(EXTI->RTSR1), primary_line);
+  register_set_bits(&(EXTI->FTSR1), primary_line);
+  EXTI->PR1 = primary_line;
+  NVIC_ClearPendingIRQ(primary_irq);
+  wake_debug_can_exti(primary_line);
+  register_set_bits(&(EXTI->IMR1), primary_line);
+  NVIC_EnableIRQ(primary_irq);
+}
+
 static void offline_wake_raw_can_exti_irq_handler(void) {
   const uint32_t armed_lines = wake_monitor_raw_can_exti_lines;
   const uint32_t primary_line = wake_monitor_primary_can_exti_line;
@@ -69,22 +102,25 @@ static void offline_wake_raw_can_exti_irq_handler(void) {
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, primary_line)) {
       // Vehicle captures show physical bus 1 is the first bus to resume. Once
-      // the shutdown guard has observed ten quiet seconds, its first RX
-      // electrical edge is sufficient: do not depend on FDCAN decoding the
+      // the host's shutdown gate has completed and COMMIT is armed, its first
+      // RX electrical edge is sufficient: do not depend on FDCAN decoding the
       // first frame while the SoM is off.
       register_clear_bits(&(EXTI->IMR1), armed_lines);
-      wake_monitor_can_activity_pending = true;
-      wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
-      wake_debug_can_exti(pending);
-      const uint8_t exti_data[8] = {
-        (uint8_t)(primary_line & 0xFFU),
-        (uint8_t)((primary_line >> 8U) & 0xFFU),
-        (uint8_t)((primary_line >> 16U) & 0xFFU),
-        (uint8_t)((primary_line >> 24U) & 0xFFU),
-        0U, 0U, 0U, 0U,
-      };
-      wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, 1U,
-                               CAN_NUM_FROM_BUS_NUM(1U), 4U, 0U, exti_data);
+      if (!wake_monitor_can_activity_pending) {
+        // Latch first; diagnostics must never sit in the wake-critical path.
+        wake_monitor_can_activity_pending = true;
+        wake_can_trace_set_source(WAKE_CAN_TRACE_SOURCE_RAW_EDGE);
+        wake_debug_can_exti(pending);
+        const uint8_t exti_data[8] = {
+          (uint8_t)(primary_line & 0xFFU),
+          (uint8_t)((primary_line >> 8U) & 0xFFU),
+          (uint8_t)((primary_line >> 16U) & 0xFFU),
+          (uint8_t)((primary_line >> 24U) & 0xFFU),
+          0U, 0U, 0U, 0U,
+        };
+        wake_journal_queue_event(WAKE_JOURNAL_SOURCE_CAN_PRIMARY, 0x35U, 1U,
+                                 CAN_NUM_FROM_BUS_NUM(1U), 4U, 0U, exti_data);
+      }
     } else if (offline_wake_raw_can_edge_hint_ready(
           wake_monitor_enabled, wake_monitor_som_off_ready, wake_monitor_can_armed,
           wake_monitor_can_wake_requested, pending, armed_lines)) {

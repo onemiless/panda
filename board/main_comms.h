@@ -124,6 +124,7 @@ static void wake_monitor_prepare(uint32_t transaction, bool committed) {
       wake_monitor_status.state = WAKE_MONITOR_STATE_PREPARED;
       wake_monitor_status.reserved = WAKE_MONITOR_STATUS_FLAG_PREPARE_DIRTY;
     } else {
+      offline_wake_active_can_exti_arm();
       wake_debug_active_can_arm_snapshot();
     }
   }
@@ -259,6 +260,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
           wake_monitor_status.state = WAKE_MONITOR_STATE_COMMITTED;
           wake_monitor_status.result = WAKE_MONITOR_RESULT_NONE;
           wake_monitor_status.reserved = wake_monitor_prepare_flags(true, wake_monitor_status.host_session);
+          offline_wake_active_can_exti_arm();
           wake_debug_active_can_arm_snapshot();
           current_board->set_bootkick(BOOT_STANDBY);
           wake_debug_stage(PANDA_WAKE_MONITOR_ARMED_STAGE);

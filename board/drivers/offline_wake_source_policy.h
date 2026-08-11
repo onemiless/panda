@@ -74,7 +74,10 @@ static inline bool offline_wake_raw_can_edge_hint_ready(bool monitor_enabled, bo
 static inline bool offline_wake_primary_raw_can_edge_ready(bool monitor_enabled, bool som_off_ready,
                                                            bool can_armed, bool wake_requested,
                                                            uint32_t pending_lines, uint32_t primary_line) {
-  return monitor_enabled && som_off_ready && can_armed && !wake_requested &&
+  // COMMIT owns event capture. SoM-off readiness gates BOOTKICK dispatch, not
+  // latching the physical edge, which may arrive while Linux is shutting down.
+  (void)som_off_ready;
+  return monitor_enabled && can_armed && !wake_requested &&
          (primary_line != 0U) && ((pending_lines & primary_line) != 0U);
 }
 
