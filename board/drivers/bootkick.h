@@ -14,6 +14,8 @@ void bootkick_tick(bool ignition, bool recent_heartbeat) {
 
   if ((ignition && !bootkick_ign_prev) || harness_inserted) {
     // bootkick on rising edge of ignition or harness insertion
+    // Multiple wake sources are combined by the caller. A continuously active
+    // source cannot create another rising edge until it first becomes inactive.
     boot_state = BOOT_BOOTKICK;
   } else if (recent_heartbeat) {
     // disable bootkick once openpilot is up
