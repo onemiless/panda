@@ -8,26 +8,6 @@ uint32_t rx_buffer_overflow = 0;
 
 can_health_t can_health[PANDA_CAN_CNT] = {{0}, {0}, {0}};
 
-bool wake_can_rate = false;
-uint32_t wake_can_rate_cnt = 0U;
-
-bool can_wake_rate_update(uint32_t total_rx, uint32_t *prev_total_rx, uint32_t *wake_counter, bool wake_active) {
-  const uint32_t rx_per_sec = total_rx - *prev_total_rx;
-  *prev_total_rx = total_rx;
-
-  if (rx_per_sec >= 200U) {
-    wake_active = true;
-    *wake_counter = 0U;
-  } else if (wake_active && (*wake_counter > 5U)) {
-    wake_active = false;
-  }
-
-  if (*wake_counter < UINT32_MAX) {
-    *wake_counter += 1U;
-  }
-  return wake_active;
-}
-
 bool can_silent = true;
 bool can_loopback = false;
 

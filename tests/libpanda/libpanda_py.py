@@ -43,7 +43,6 @@ extern can_ring *tx3_q;
 bool can_pop(can_ring *q, CANPacket_t *elem);
 bool can_push(can_ring *q, CANPacket_t *elem);
 void can_set_checksum(CANPacket_t *packet);
-bool can_wake_rate_update(uint32_t total_rx, uint32_t *prev_total_rx, uint32_t *wake_counter, bool wake_active);
 int comms_can_read(uint8_t *data, uint32_t max_len);
 void comms_can_write(uint8_t *data, uint32_t len);
 void comms_can_reset(void);

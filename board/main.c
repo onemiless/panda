@@ -171,19 +171,9 @@ static void tick_handler(void) {
 
       const bool recent_heartbeat = heartbeat_counter == 0U;
 
-      // Wake the SoM when vehicle CAN traffic returns, even if the ignition
-      // message has not yet reached the counter-gated ignition hook.
-      static uint32_t prev_total_rx = 0U;
-      uint32_t total_rx = 0U;
-      for (uint8_t i = 0U; i < PANDA_CAN_CNT; i++) {
-        total_rx += can_health[i].total_rx_cnt;
-      }
-      wake_can_rate = can_wake_rate_update(total_rx, &prev_total_rx, &wake_can_rate_cnt, wake_can_rate);
-
       // tick drivers at 1Hz
-      bool started = harness_check_ignition() || ignition_can || wake_can_rate;
-      bool wake_up = started || wake_on_can;
-      bootkick_tick(wake_up, recent_heartbeat);
+      bool started = harness_check_ignition() || ignition_can;
+      bootkick_tick(started, recent_heartbeat);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {
@@ -263,15 +253,11 @@ static void tick_handler(void) {
       if (ignition_can_cnt > 2U) {
         ignition_can = false;
       }
-      if (wake_on_can_cnt > 2U) {
-        wake_on_can = false;
-      }
 
       // on to the next one
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
-      wake_on_can_cnt += 1U;
 
       // synchronous safety check
       safety_tick(&current_safety_config);
