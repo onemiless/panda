@@ -32,3 +32,6 @@ uint32_t microsecond_timer_get(void) {
 }
 
 typedef uint32_t GPIO_TypeDef;
+
+// Host tests have no ADC registers; only the harness declaration needs this type.
+typedef struct { uint32_t channel; } adc_signal_t;

@@ -5,7 +5,7 @@
 #include "board/crc.h"
 #ifdef STM32H7
 #include "board/stm32h7/lladc_declarations.h"
-#else
+#elif defined(STM32F4)
 #include "board/stm32f4/lladc_declarations.h"
 #endif
 
