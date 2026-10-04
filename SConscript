@@ -185,4 +185,5 @@ build_project("panda_h7", base_project_h7, "./board/main.c", [])
 build_project("body_h7", base_project_h7, "./board/body/main.c", ["-DPANDA_BODY"])
 
 # test files
-SConscript('tests/libpanda/SConscript')
+if GetOption('extras'):
+  SConscript('tests/libpanda/SConscript')
