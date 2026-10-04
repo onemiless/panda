@@ -58,12 +58,15 @@ void check_registers(void){
     if((uint32_t) register_map[i].address != 0U){
       ENTER_CRITICAL()
       if((*(register_map[i].address) & register_map[i].check_mask) != (register_map[i].value & register_map[i].check_mask)){
-        #ifdef DEBUG_FAULTS
+        #if defined(DEBUG_FAULTS) || defined(STM32F4)
+        if (!register_map[i].logged_fault) {
           print("Register at address 0x"); puth((uint32_t) register_map[i].address); print(" is divergent!");
           print("   Map: 0x"); puth(register_map[i].value);
           print("   Register: 0x"); puth(*(register_map[i].address));
           print("   Mask: 0x"); puth(register_map[i].check_mask);
           print("\n");
+          register_map[i].logged_fault = true;
+        }
         #endif
         fault_occurred(FAULT_REGISTER_DIVERGENT);
       }
