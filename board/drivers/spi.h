@@ -26,7 +26,6 @@ enum {
   SPI_STATE_DATA_RX_ACK,
   SPI_STATE_DATA_TX
 };
-
 uint16_t spi_error_count = 0;
 
 #define SPI_HEADER_SIZE 7U
