@@ -16,7 +16,7 @@ extern uint32_t uptime_cnt;
 // heartbeat state
 extern uint32_t heartbeat_counter;
 extern bool heartbeat_lost;
-extern bool heartbeat_disabled;
+extern bool heartbeat_disabled;            // set over USB
 
 // siren state
 extern bool siren_enabled;
