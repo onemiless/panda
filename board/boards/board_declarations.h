@@ -31,7 +31,6 @@ struct board {
   const bool has_spi;
   const bool has_fan;
   const uint16_t avdd_mV;
-  const bool fan_stall_recovery;
   const uint8_t fan_enable_cooldown_time;
   board_init init;
   board_init_bootloader init_bootloader;
