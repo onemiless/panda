@@ -236,7 +236,7 @@ void spi_rx_done(void);
 void spi_tx_done(bool reset);
 
 // ******************** uart ********************
-#ifdef STM32H7
+#if defined(STM32H7) || defined(STM32F4)
 
 // ***************************** Definitions *****************************
 #define FIFO_SIZE_INT 0x400U

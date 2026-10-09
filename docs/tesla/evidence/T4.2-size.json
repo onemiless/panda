@@ -1,0 +1,44 @@
+{
+  "toolchain": "arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203",
+  "sections": {
+    ".isr_vector": 472,
+    ".text": 51584,
+    ".data": 45208,
+    ".bss": 126640,
+    "._user_heap_stack": 1024,
+    ".ARM.attributes": 53,
+    ".debug_line": 55710,
+    ".debug_line_str": 70,
+    ".debug_info": 90906,
+    ".debug_abbrev": 2874,
+    ".debug_aranges": 80,
+    ".debug_str": 31464,
+    ".debug_rnglists": 4473,
+    ".debug_loclists": 51575,
+    ".comment": 69,
+    ".debug_frame": 9892
+  },
+  "flash_app_limit": 1032192,
+  "ram_limit": 262144,
+  "opendbc_head": "b9e962712e8ba7300a1c093d3e9131343ccd047a",
+  "opendbc_dirty": true,
+  "note": "Build used in-progress Tesla safety tree; rebuild against committed final opendbc for release. No device or firmware write.",
+  "artifacts": {
+    "panda.bin.signed": {
+      "bytes": 97408,
+      "sha256": "d65560da8756fad5c1cf76cd9f731aa835004feb64af878a8c7a0a5cd964d2ec"
+    },
+    "bootstub.panda.bin": {
+      "bytes": 10992,
+      "sha256": "f7f10bfaa2038e2465e90164609c823defb9852a54d7f92ca8825c8f8c821a0b"
+    },
+    "panda_h7.bin.signed": {
+      "bytes": 107492,
+      "sha256": "f1a29d3188cccc1c9446dcb3a642fb4343ec2caec230bd585ed43d7dbeb59996"
+    },
+    "bootstub.panda_h7.bin": {
+      "bytes": 18872,
+      "sha256": "0a4621793981907a14d67af0df98bfe1bc7008aeebc4bf84b07b6fd0c5135967"
+    }
+  }
+}

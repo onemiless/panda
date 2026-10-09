@@ -58,7 +58,8 @@ uint16_t sound_output_level = 0U;
 #include "board/stm32f4/clock.h"
 
 #if !defined(BOOTSTUB)
-  #include "board/drivers/debug.h"
+  #include "board/drivers/uart.h"
+  #include "board/stm32f4/lluart.h"
 #endif
 
 #ifdef BOOTSTUB

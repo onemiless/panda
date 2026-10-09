@@ -1,0 +1,21 @@
+board/obj/panda/main.elf  :
+section               size        addr
+.isr_vector            472   134234112
+.text                51584   134234592
+.data                45208   536870912
+.bss                126640   536916120
+._user_heap_stack     1024   537042760
+.ARM.attributes         53           0
+.debug_line          55710           0
+.debug_line_str         70           0
+.debug_info          90906           0
+.debug_abbrev         2874           0
+.debug_aranges          80           0
+.debug_str           31464           0
+.debug_rnglists       4473           0
+.debug_loclists      51575           0
+.comment                69           0
+.debug_frame          9892           0
+Total               472094
+
+
