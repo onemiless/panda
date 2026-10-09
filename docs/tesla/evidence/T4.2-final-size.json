@@ -1,0 +1,45 @@
+{
+  "source_head": "f65a58c86a6cbdf3bcd935ad9ad2ce0ca8b92b82",
+  "toolchain": "arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203",
+  "sections": {
+    ".isr_vector": 472,
+    ".text": 51576,
+    ".data": 45208,
+    ".bss": 126640,
+    "._user_heap_stack": 1024,
+    ".ARM.attributes": 53,
+    ".debug_line": 55712,
+    ".debug_line_str": 70,
+    ".debug_info": 90943,
+    ".debug_abbrev": 2872,
+    ".debug_aranges": 80,
+    ".debug_str": 31468,
+    ".debug_rnglists": 4480,
+    ".debug_loclists": 51573,
+    ".comment": 69,
+    ".debug_frame": 9892
+  },
+  "flash_app_limit": 1032192,
+  "ram_limit": 262144,
+  "opendbc_head": "522598445d134bea277789e01ea7d1809b3afc7c",
+  "opendbc_dirty": false,
+  "note": "Final Tesla safety rebuild. No device or firmware write.",
+  "artifacts": {
+    "panda.bin.signed": {
+      "bytes": 97400,
+      "sha256": "084d0224acde1a796e39b78c779da1df2a1cb3d44f0e13a6fefcb80635b48fda"
+    },
+    "bootstub.panda.bin": {
+      "bytes": 10992,
+      "sha256": "13873c4402f9e16cf48ee597e7eb4f564b715092ced209fe22bc2250db102fc0"
+    },
+    "panda_h7.bin.signed": {
+      "bytes": 107484,
+      "sha256": "d8b0ca128c774039b6bd9bb54dbfce0addca05fa0e811fd1ecdca8c570839987"
+    },
+    "bootstub.panda_h7.bin": {
+      "bytes": 18872,
+      "sha256": "63f2c9d71c25e054341124db466b63b6c9c84b061d9c8f1ae0cddbc349c2d3af"
+    }
+  }
+}
